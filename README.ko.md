@@ -4,7 +4,7 @@
 
 <h1 align="center">ContextManager</h1>
 
-<p align="center">Windows 10 / 11 탐색기 컨텍스트 메뉴를 조회하고 비활성화 및 백업 후 제거하는 관리 도구<br>v1.1.0</p>
+<p align="center">Windows 10 / 11 탐색기 컨텍스트 메뉴를 조회하고 비활성화 및 백업 후 제거하는 관리 도구<br>v1.1.1</p>
 
 <p align="center">
   <a href="README.md">English</a> | <b>한국어</b> | <a href="README.zh.md">中文(简体)</a> | <a href="README.ja.md">日本語</a>
