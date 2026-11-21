@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 use crate::model::{Category, ContextEntry, EntryKind, Scope, TargetLabel};
 use crate::path_util::{
     clean_mnemonic, expand_env, extract_executable_from_command, extract_path_from_icon,
-    extract_server_path, is_likely_system_entry, resolve_and_check_exists, resolve_lnk_target,
-    resolve_mui_string,
+    extract_server_path, is_likely_system_entry, path_exists_safe, resolve_and_check_exists,
+    resolve_lnk_target, resolve_mui_string,
 };
 use crate::reg::{RegKey, RegRoot};
 
@@ -454,6 +454,9 @@ impl ScanContext {
         let Some(repo_key) = RegKey::open_read(RegRoot::Hkcu, repo_key_path) else {
             return;
         };
+        let program_files =
+            std::env::var("ProgramFiles").unwrap_or_else(|_| "C:\\Program Files".into());
+        let windows_apps_dir = Path::new(&program_files).join("WindowsApps");
 
         for pkg_full_name in repo_key.enum_subkeys() {
             let Some(pkg_key) = repo_key.open_subkey_read(&pkg_full_name) else {
@@ -462,7 +465,11 @@ impl ScanContext {
             let Some(root_folder) = pkg_key.read_string("PackageRootFolder") else {
                 continue;
             };
-            let manifest_path = Path::new(&root_folder).join("AppxManifest.xml");
+            let Some(manifest_path) =
+                find_package_manifest(&root_folder, &windows_apps_dir, &pkg_full_name)
+            else {
+                continue;
+            };
             let Ok(xml) = std::fs::read_to_string(&manifest_path) else {
                 continue;
             };
@@ -470,11 +477,15 @@ impl ScanContext {
                 continue;
             }
 
+            let manifest_dir = manifest_path.parent().unwrap_or_else(|| Path::new(&root_folder));
             let pkg_display = pkg_key
                 .read_string("DisplayName")
                 .map(|s| resolve_mui_string(&s))
                 .filter(|s| !s.trim().is_empty() && !s.starts_with("ms-resource:"))
-                .or_else(|| extract_xml_tag_text(&xml, "DisplayName").filter(|s| !s.starts_with("ms-resource:")))
+                .or_else(|| {
+                    extract_xml_tag_text(&xml, "DisplayName")
+                        .filter(|s| !s.starts_with("ms-resource:"))
+                })
                 .unwrap_or_else(|| short_package_name(&pkg_full_name));
 
             let verbs = parse_manifest_context_menus(&xml);
@@ -484,21 +495,27 @@ impl ScanContext {
                     continue;
                 }
 
-                // PackagedCom 에서 실제 DLL 경로 조회
+                // PackagedCom 에서 실제 DLL 경로 조회 (Sparse Package 는 PackageRootFolder 또는 WindowsApps 하위)
                 let dll_rel = find_packaged_com_dll(&pkg_full_name, &clsid);
                 let (resolved_target, target_exists) = match dll_rel {
                     Some(rel) => {
-                        let full = if Path::new(&rel).is_absolute() {
+                        let p = Path::new(&rel);
+                        let full = if p.is_absolute() {
                             PathBuf::from(rel)
                         } else {
-                            Path::new(&root_folder).join(rel)
+                            let under_root = Path::new(&root_folder).join(&rel);
+                            if path_exists_safe(&under_root) {
+                                under_root
+                            } else {
+                                manifest_dir.join(&rel)
+                            }
                         };
                         let s = full.to_string_lossy().into_owned();
-                        let exists = full.exists();
+                        let exists = path_exists_safe(&full);
                         (Some(s), Some(exists))
                     }
                     None => {
-                        let exists = Path::new(&root_folder).exists();
+                        let exists = path_exists_safe(Path::new(&root_folder));
                         (Some(root_folder.clone()), Some(exists))
                     }
                 };
@@ -510,11 +527,12 @@ impl ScanContext {
                     other => TargetLabel::Custom(other.to_string()),
                 };
 
-                let display_name = if verb.id.is_empty() || verb.id.eq_ignore_ascii_case(&pkg_display) {
-                    pkg_display.clone()
-                } else {
-                    format!("{pkg_display} ({})", verb.id)
-                };
+                let display_name =
+                    if verb.id.is_empty() || verb.id.eq_ignore_ascii_case(&pkg_display) {
+                        pkg_display.clone()
+                    } else {
+                        format!("{pkg_display} ({})", verb.id)
+                    };
 
                 let disabled = self.blocked_clsids.contains(&clsid);
                 let id = format!("WIN11:{pkg_full_name}:{clsid}:{}", verb.item_type);
@@ -525,7 +543,7 @@ impl ScanContext {
                 );
                 let group_key = ContextEntry::compute_group_key(
                     EntryKind::Win11Packaged,
-                    &pkg_display,
+                    &display_name,
                     resolved_target.as_deref(),
                     Some(&clsid),
                     Some(&pkg_full_name),
@@ -950,6 +968,24 @@ fn short_package_name(pkg_full_name: &str) -> String {
     pkg_full_name.split('_').next().unwrap_or(pkg_full_name).to_string()
 }
 
+/// 패키지 매니페스트 경로 탐색
+/// 일반 MSIX 는 PackageRootFolder\AppxManifest.xml, Sparse Package 는 WindowsApps\<pkg>\AppxManifest.xml 에 위치
+fn find_package_manifest(
+    root_folder: &str,
+    windows_apps_dir: &Path,
+    pkg_full_name: &str,
+) -> Option<PathBuf> {
+    let direct = Path::new(root_folder).join("AppxManifest.xml");
+    if direct.is_file() {
+        return Some(direct);
+    }
+    let sparse = windows_apps_dir.join(pkg_full_name).join("AppxManifest.xml");
+    if sparse.is_file() {
+        return Some(sparse);
+    }
+    None
+}
+
 fn find_packaged_com_dll(pkg_full_name: &str, clsid: &str) -> Option<String> {
     let rel = format!("PackagedCom\\Package\\{pkg_full_name}\\Class\\{clsid}");
     for (root, base) in [
@@ -1007,6 +1043,24 @@ mod tests {
         assert_eq!(verbs[0].id, "OpenInTerminal");
         assert_eq!(verbs[0].clsid, "9F156764-7844-4DC4-B2B1-901F640F5155");
         assert_eq!(verbs[1].item_type, "Directory\\Background");
+    }
+
+    #[test]
+    fn find_package_manifest_falls_back_to_windows_apps_for_sparse_package() {
+        let base = std::env::temp_dir().join(format!("cm_sparse_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let app_root = base.join("ExternalApp");
+        let win_apps = base.join("WindowsApps");
+        let pkg = "Vendor.Demo_1.0.0.0_x64__abc";
+        std::fs::create_dir_all(&app_root).unwrap();
+        std::fs::create_dir_all(win_apps.join(pkg)).unwrap();
+        let expected = win_apps.join(pkg).join("AppxManifest.xml");
+        std::fs::write(&expected, "<Package/>").unwrap();
+
+        let found = find_package_manifest(&app_root.to_string_lossy(), &win_apps, pkg);
+        assert_eq!(found.as_deref(), Some(expected.as_path()));
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
