@@ -1,11 +1,13 @@
 //! 컨텍스트 메뉴 항목 비활성화(숨기기), 활성화 및 백업 후 삭제 실행기
 
+use std::collections::HashSet;
 use std::path::Path;
 
 use crate::backup::{self, BackupRecord};
 use crate::model::{ContextEntry, EntryKind};
 use crate::reg::{self, RegKey, RegRoot};
 use crate::scanner::{BLOCKED_SUBKEY, sendto_active_dir, sendto_disabled_dir};
+use crate::system;
 
 /// 일괄 작업 실행 결과
 #[derive(Debug, Default)]
@@ -109,6 +111,7 @@ pub fn delete_entries_with_backup(
 
     let record = backup::create_backup(entries, backup_dir)?;
     let mut report = ActionReport::default();
+    let mut removed_packages: HashSet<String> = HashSet::new();
 
     for entry in entries {
         let res = match entry.kind {
@@ -132,15 +135,42 @@ pub fn delete_entries_with_backup(
                 }
             }
             EntryKind::Win11Packaged => {
-                // MSIX 패키지 내부 파일은 OS 보호 영역이므로 Blocked 키에 등록하여 영구 숨김 처리
-                let r = set_single_disabled(entry, true);
-                if r.is_ok() {
-                    report.notes.push(format!(
-                        "[{}] Windows 11 패키지 메뉴는 OS 보호 영역이므로 차단(숨김) 목록에 등록했습니다.",
-                        entry.display_name
-                    ));
+                if entry.is_orphaned() {
+                    // 파일이 없는 잔여 Sparse/MSIX 패키지는 Remove-AppxPackage 로 완전히 제거
+                    if let Some(pkg) = entry.package_name.as_deref() {
+                        let pkg_key = pkg.to_ascii_lowercase();
+                        let r = if removed_packages.contains(&pkg_key) {
+                            Ok(())
+                        } else {
+                            let res = system::remove_appx_package(pkg);
+                            if res.is_ok() {
+                                removed_packages.insert(pkg_key);
+                            }
+                            res
+                        };
+                        if r.is_ok() {
+                            // 잔여 Blocked CLSID 항목도 함께 정리
+                            if let Some(clsid) = entry.clsid.as_deref() {
+                                if let Ok(k) = RegKey::open_write(RegRoot::Hkcu, BLOCKED_SUBKEY) {
+                                    let _ = k.delete_value(clsid);
+                                }
+                            }
+                        }
+                        r
+                    } else {
+                        set_single_disabled(entry, true)
+                    }
+                } else {
+                    // 정상 설치된 MSIX/Sparse 패키지는 앱 손상을 막기 위해 Blocked 키로 숨김 처리
+                    let r = set_single_disabled(entry, true);
+                    if r.is_ok() {
+                        report.notes.push(format!(
+                            "[{}] Windows 11 패키지 메뉴는 OS 보호 영역이므로 차단(숨김) 목록에 등록했습니다.",
+                            entry.display_name
+                        ));
+                    }
+                    r
                 }
-                r
             }
         };
 

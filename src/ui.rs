@@ -16,7 +16,7 @@ use crate::dialog;
 use crate::i18n::Language;
 use crate::model::{
     Category, ContextEntry, EntryGroup, EntryKind, FilterOptions, build_groups, count_group_totals,
-    find_related_unchecked_indices, matches_filter,
+    find_related_unchecked_indices, find_shared_clsid_peers, matches_filter,
 };
 use crate::reg::RegRoot;
 use crate::scanner::{self, ScanResult};
@@ -1226,6 +1226,17 @@ impl ContextManagerApp {
                                 }
                             });
 
+                        if let Some(ref clsid) = first.clsid {
+                            let peers = find_shared_clsid_peers(&self.entries, clsid, &first.group_key);
+                            if !peers.is_empty() {
+                                ui.add_space(4.0);
+                                ui.colored_label(
+                                    ui.visuals().warn_fg_color,
+                                    lang.fmt_shared_clsid_warn(&peers.join(", ")),
+                                );
+                            }
+                        }
+
                         if let Some(ref target) = first.resolved_target {
                             ui.add_space(6.0);
                             ui.weak(lang.target_exe_label());
@@ -1393,10 +1404,25 @@ impl ContextManagerApp {
         let base_count = self.checked_ids.len();
         let total = effective_targets.len();
         let admin_needed = effective_targets.iter().filter(|e| e.requires_admin_to_delete()).count();
-        let win11_count = effective_targets
+        let win11_orphan_count = effective_targets
             .iter()
-            .filter(|e| e.kind == EntryKind::Win11Packaged)
+            .filter(|e| e.kind == EntryKind::Win11Packaged && e.is_orphaned())
             .count();
+        let win11_active_count = effective_targets
+            .iter()
+            .filter(|e| e.kind == EntryKind::Win11Packaged && !e.is_orphaned())
+            .count();
+        let mut shared_peers: BTreeSet<String> = BTreeSet::new();
+        for e in &effective_targets {
+            if e.kind == EntryKind::Win11Packaged && !e.is_orphaned() {
+                if let Some(ref clsid) = e.clsid {
+                    for p in find_shared_clsid_peers(&self.entries, clsid, &e.group_key) {
+                        shared_peers.insert(p);
+                    }
+                }
+            }
+        }
+        let shared_peers_text = shared_peers.into_iter().collect::<Vec<_>>().join(", ");
         let preview_names: Vec<String> = effective_targets
             .iter()
             .take(10)
@@ -1434,11 +1460,27 @@ impl ContextManagerApp {
                     });
             }
 
-            if win11_count > 0 {
+            if win11_orphan_count > 0 {
                 ui.add_space(4.0);
                 ui.colored_label(
                     ui.visuals().warn_fg_color,
-                    lang.fmt_modal_win11_note(win11_count),
+                    lang.fmt_modal_win11_orphan_remove(win11_orphan_count),
+                );
+            }
+
+            if win11_active_count > 0 {
+                ui.add_space(4.0);
+                ui.colored_label(
+                    ui.visuals().warn_fg_color,
+                    lang.fmt_modal_win11_note(win11_active_count),
+                );
+            }
+
+            if !shared_peers_text.is_empty() {
+                ui.add_space(4.0);
+                ui.colored_label(
+                    ui.visuals().warn_fg_color,
+                    lang.fmt_shared_clsid_warn(&shared_peers_text),
                 );
             }
 

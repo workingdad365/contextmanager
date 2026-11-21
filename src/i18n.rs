@@ -659,10 +659,26 @@ impl Language {
     }
     pub fn fmt_modal_win11_note(self, count: usize) -> String {
         match self {
-            Language::En => format!("{count} Windows 11 packaged item(s) are protected by the OS and will be added to the Blocked list instead of deleted."),
-            Language::Ko => format!("Windows 11 패키지 메뉴 {count}건은 시스템 보호 영역이므로 파일 삭제 대신 차단(숨김) 목록에 등록됩니다."),
-            Language::Zh => format!("{count} 个 Windows 11 应用包菜单受系统保护，将添加到阻止列表以隐藏，而非删除文件。"),
-            Language::Ja => format!("Windows 11 パッケージメニュー {count} 件はシステム保護領域のため、削除の代わりにブロック一覧へ登録されます。"),
+            Language::En => format!("{count} active Windows 11 packaged item(s) belong to installed apps and will be added to the Blocked (hidden) list instead of uninstalling the app."),
+            Language::Ko => format!("정상 설치된 Windows 11 패키지 메뉴 {count}건은 앱 손상을 막기 위해 패키지 삭제 대신 차단(숨김) 목록에 등록됩니다."),
+            Language::Zh => format!("{count} 个正常安装的 Windows 11 应用包菜单为防止损坏应用，将添加到阻止（隐藏）列表而不卸载应用。"),
+            Language::Ja => format!("正常にインストールされた Windows 11 パッケージ項目 {count} 件はアプリ破損を防ぐため、アンインストールせずブロック（非表示）一覧へ登録されます。"),
+        }
+    }
+    pub fn fmt_modal_win11_orphan_remove(self, count: usize) -> String {
+        match self {
+            Language::En => format!("{count} orphaned Windows 11 package(s) (missing DLL) will be completely uninstalled via Remove-AppxPackage."),
+            Language::Ko => format!("파일이 없는 잔여 Windows 11 패키지 {count}건은 Remove-AppxPackage로 Windows에서 완전히 제거됩니다."),
+            Language::Zh => format!("{count} 个文件缺失的残留 Windows 11 应用包将通过 Remove-AppxPackage 彻底卸载移除。"),
+            Language::Ja => format!("ファイルのない残骸 Windows 11 パッケージ {count} 件は Remove-AppxPackage で Windows から完全に削除されます。"),
+        }
+    }
+    pub fn fmt_shared_clsid_warn(self, peers: &str) -> String {
+        match self {
+            Language::En => format!("Warning: This CLSID is shared with other item(s) ({peers}). Disabling/blocking it will affect them together."),
+            Language::Ko => format!("주의: 이 CLSID는 다른 항목({peers})과 공유되므로 숨기기/차단 시 함께 영향을 받습니다."),
+            Language::Zh => format!("注意: 此 CLSID 与其他项（{peers}）共享，禁用或阻止时会一并受影响。"),
+            Language::Ja => format!("注意: この CLSID は他の項目（{peers}）と共有されているため、無効化すると一緒に影響を受けます。"),
         }
     }
     pub fn fmt_modal_admin_warn(self, count: usize) -> String {

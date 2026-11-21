@@ -424,6 +424,28 @@ pub fn count_group_totals(entries: &[ContextEntry]) -> HashMap<String, usize> {
     counts
 }
 
+/// 동일한 CLSID 를 공유하는 다른 그룹의 표시 이름 목록 조회 (예: 제조사 간 샘플 CLSID 중복)
+pub fn find_shared_clsid_peers(
+    entries: &[ContextEntry],
+    clsid: &str,
+    exclude_group_key: &str,
+) -> Vec<String> {
+    let target = clsid.trim();
+    if target.is_empty() {
+        return Vec::new();
+    }
+    let mut names: BTreeSet<String> = BTreeSet::new();
+    for e in entries {
+        if e.group_key == exclude_group_key {
+            continue;
+        }
+        if e.clsid.as_deref().is_some_and(|c| c.eq_ignore_ascii_case(target)) {
+            names.insert(e.display_name.clone());
+        }
+    }
+    names.into_iter().collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -528,5 +550,22 @@ mod tests {
         assert!(EntryKind::ShellEx.needs_explorer_restart());
         assert!(EntryKind::Win11Packaged.needs_explorer_restart());
         assert!(EntryKind::ShellNew.needs_explorer_restart());
+    }
+
+    #[test]
+    fn detects_other_apps_sharing_same_clsid() {
+        let mut e1 = sample_entry("w1", "EmEditor (MSI) (GrepEmEditor)", TargetLabel::Directory, "C:\\Em\\ee.dll", true, Category::Win11Modern);
+        e1.kind = EntryKind::Win11Packaged;
+        e1.clsid = Some("{3282E233-C5D3-4533-9B25-44B8AAAFACFA}".into());
+        e1.group_key = "pkg:emeditor:grep".into();
+
+        let mut e2 = sample_entry("w2", "Adobe Acrobat (CreateAdobePDF)", TargetLabel::Custom(".pdf".into()), "C:\\Adobe\\shim.dll", true, Category::Win11Modern);
+        e2.kind = EntryKind::Win11Packaged;
+        e2.clsid = Some("{3282E233-C5D3-4533-9B25-44B8AAAFACFA}".into());
+        e2.group_key = "pkg:adobe:create".into();
+
+        let entries = vec![e1.clone(), e2.clone()];
+        let peers = find_shared_clsid_peers(&entries, "{3282E233-C5D3-4533-9B25-44B8AAAFACFA}", &e1.group_key);
+        assert_eq!(peers, vec!["Adobe Acrobat (CreateAdobePDF)"]);
     }
 }

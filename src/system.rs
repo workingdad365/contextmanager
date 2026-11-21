@@ -137,3 +137,50 @@ pub fn restart_explorer() -> Result<(), String> {
         .map_err(|e| format!("탐색기 재실행 실패: {e}"))?;
     Ok(())
 }
+
+/// 패키지 전체 이름 유효성 검사 (영문/숫자/./_/- 만 허용)
+pub fn is_valid_package_full_name(pkg: &str) -> bool {
+    !pkg.is_empty()
+        && pkg
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+}
+
+/// 잔여 Windows 11 AppX / Sparse Package 제거
+pub fn remove_appx_package(package_full_name: &str) -> Result<(), String> {
+    if !is_valid_package_full_name(package_full_name) {
+        return Err(format!("올바르지 않은 패키지 이름: {package_full_name}"));
+    }
+    let script = format!("Remove-AppxPackage -Package '{package_full_name}' -ErrorAction Stop");
+    let output = Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map_err(|e| format!("PowerShell 실행 실패: {e}"))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let detail = if stderr.is_empty() {
+            format!("exit code {:?}", output.status.code())
+        } else {
+            stderr.lines().next().unwrap_or(&stderr).to_string()
+        };
+        Err(format!("패키지 제거 실패 ({package_full_name}): {detail}"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn package_full_name_validation_rejects_shell_metachars() {
+        assert!(is_valid_package_full_name("shellmenua_5.0.0.0_neutral__5r2yrzxs9d21c"));
+        assert!(is_valid_package_full_name("Emurasoft.EmEditor.EmEditor_1.0.0.0_x64__bpd82vs5ee13j"));
+        assert!(!is_valid_package_full_name(""));
+        assert!(!is_valid_package_full_name("pkg'; calc.exe #"));
+        assert!(!is_valid_package_full_name("pkg name with space"));
+    }
+}
