@@ -33,6 +33,7 @@ ContextManager 可集中列出 Windows 10 / 11 文件资源管理器中的所有
   - `COM 外壳扩展` / `Win11 新版`: 通过 `Shell Extensions\Blocked` 阻止/解除阻止
   - `发送到`: 在 `SendTo` 与 `%LOCALAPPDATA%\ContextManager\disabled_sendto` 之间移动文件
   - `新建`: 重命名 `ShellNew` <-> `ShellNew_Disabled`
+- **添加与编辑 Shell 命令**: 可直接在界面中为所有文件（`*`）、文件夹（`Directory`）、文件夹背景（`Directory\Background`）、驱动器或指定扩展名注册自定义 `.bat`/`.cmd` 脚本或 `.exe` 命令，支持浏览选择文件/图标、快捷插入 `"%1"`/`"%V"`/`cmd /k`、`Shift+右键显示(Extended)` 与菜单位置（`Top`/`Bottom`），并可直接编辑现有 `Shell 命令`。
 - **自动备份与一键还原**: 删除前自动在 `%LOCALAPPDATA%\ContextManager\backups` 中保存完整的 `.json` 元数据与 `.reg` 注册表文件（以及 `SendTo` 文件副本），随时可在“备份 / 还原”窗口中恢复。
 - **自动更新**: 启动时自动检查一次，也可点击顶部“检查更新”按钮手动检测 GitHub Releases 新版本，并直接在应用内下载与静默安装。
 - **多语言界面**: 默认英文，支持在界面中实时切换英文、韩文、简体中文与日文。

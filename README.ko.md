@@ -33,6 +33,7 @@ Windows 탐색기에서 파일, 폴더, 배경, 드라이브 등을 마우스 �
   - `COM 셸 확장` / `Win11 신형`: `Shell Extensions\Blocked` 등록/해제
   - `보내기`: `%LOCALAPPDATA%\ContextManager\disabled_sendto`로 이동/복원
   - `새로 만들기`: `ShellNew` <-> `ShellNew_Disabled` 이름 변경
+- **Shell 명령 직접 추가 및 편집**: 모든 파일(`*`), 폴더(`Directory`), 폴더 배경(`Directory\Background`), 드라이브, 특정 확장자 등에 `.bat`/`.cmd` 스크립트나 `.exe` 실행 명령을 UI에서 바로 등록 가능. 파일/아이콘 찾아보기, `"%1"`/`"%V"`/`cmd /k` 빠른 삽입, `Shift+우클릭 전용(Extended)`, 메뉴 위치(`Top`/`Bottom`) 설정 및 기존 `Shell 명령` 편집 지원
 - **자동 백업 및 원클릭 복원**: 항목 제거 전 `%LOCALAPPDATA%\ContextManager\backups`에 JSON 메타데이터와 `.reg` 파일을 자동 저장하고, 프로그램 내 `백업 / 복원` 창에서 바로 복원 가능
 - **자동 업데이트**: 시작 시 1회 및 상단 `업데이트 확인` 버튼으로 GitHub Releases 최신 버전을 확인하고, 앱 내에서 바로 다운로드 및 설치 가능
 - **다국어 UI**: 기본 영어를 포함해 영어, 한국어, 중국어(간체), 일본어 즉시 전환 지원

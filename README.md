@@ -33,6 +33,7 @@ ContextManager lists every right-click context menu entry in Windows 10 and Wind
   - `COM ShellEx` / `Win11 Modern`: registers/removes CLSID under `Shell Extensions\Blocked`
   - `Send To`: moves files to/from `%LOCALAPPDATA%\ContextManager\disabled_sendto`
   - `New Menu`: renames `ShellNew` <-> `ShellNew_Disabled`
+- **Add & Edit Shell Commands**: Register custom right-click `shell` commands (such as `.bat`/`.cmd` scripts or `.exe` tools) for all files (`*`), folders (`Directory`), folder backgrounds (`Directory\Background`), drives, or specific extensions directly from the UI, with file/icon browsers, quick `%1`/`%V`/`cmd /k` helpers, `Extended` (Shift+Right-Click), and menu position (`Top`/`Bottom`) options. Existing `Shell Verb` entries can also be edited in place.
 - **Automatic Backup & One-Click Restore**: Before deleting any entry, saves full registry snapshots (`.json` and `.reg`) and file copies under `%LOCALAPPDATA%\ContextManager\backups`. Restore anytime from the built-in **Backup / Restore** dialog.
 - **Auto Update**: Checks GitHub Releases on startup and on demand via the **Check Updates** button, with in-app download progress and silent installer handoff.
 - **Multilingual UI**: Default English with instant switching between English, Korean, Simplified Chinese, and Japanese.

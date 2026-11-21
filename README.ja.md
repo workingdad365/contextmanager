@@ -33,6 +33,7 @@ Windows 10 / 11 のエクスプローラーで右クリックした際に表示�
   - `COM シェル拡張` / `Win11 モダン`: `Shell Extensions\Blocked` への登録・解除
   - `送る`: `%LOCALAPPDATA%\ContextManager\disabled_sendto` との間でファイル移動
   - `新規作成`: `ShellNew` <-> `ShellNew_Disabled` へのリネーム
+- **Shell コマンドの追加・編集**: すべてのファイル（`*`）、フォルダー（`Directory`）、フォルダーの背景（`Directory\Background`）、ドライブ、特定の拡張子に対して、`.bat`/`.cmd` スクリプトや `.exe` コマンドを UI から直接登録できます。ファイル/アイコン参照、`"%1"`/`"%V"`/`cmd /k` のクイック挿入、`Shift+右クリック専用(Extended)`、メニュー位置（`Top`/`Bottom`）設定、および既存の `Shell コマンド` 編集に対応しています。
 - **自動バックアップとワンクリック復元**: 削除前に `%LOCALAPPDATA%\ContextManager\backups` へ `.json` と `.reg`（および `SendTo` ファイル）を自動保存し、アプリ内の「バックアップ / 復元」からいつでも元に戻せます。
 - **自動アップデート**: 起動時に 1 回、および上部ツールの「更新を確認」ボタンで GitHub Releases の最新バージョンを確認し、アプリ内からダウンロードと自動インストールを実行できます。
 - **多言語 UI**: デフォルトは英語で、英語・韓国語・簡体字中国語・日本語を即座に切り替えられます。

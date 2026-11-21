@@ -3,6 +3,7 @@
 mod action;
 mod backup;
 mod config;
+mod dialog;
 mod i18n;
 mod model;
 mod path_util;

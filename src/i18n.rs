@@ -784,6 +784,125 @@ impl Language {
     pub fn msg_explorer_restarted(self) -> &'static str {
         self.pick("Windows Explorer restarted.", "Windows 탐색기를 다시 시작했습니다.", "已重启 Windows 资源管理器。", "Windows エクスプローラーを再起動しました。")
     }
+
+    // --- Add / Edit Shell Command modal ---
+    pub fn btn_add_shell(self) -> &'static str {
+        self.pick("+ Add Shell Command", "+ Shell 명령 추가", "+ 添加 Shell 命令", "+ Shell コマンド追加")
+    }
+    pub fn btn_edit(self) -> &'static str {
+        self.pick("Edit", "편집", "编辑", "編集")
+    }
+    pub fn modal_add_shell_title(self) -> &'static str {
+        self.pick("Add Shell Command", "Shell 명령 추가", "添加 Shell 命令", "Shell コマンドを追加")
+    }
+    pub fn modal_edit_shell_title(self) -> &'static str {
+        self.pick("Edit Shell Command", "Shell 명령 편집", "编辑 Shell 命令", "Shell コマンドを編集")
+    }
+    pub fn shell_target_label(self) -> &'static str {
+        self.pick("Target", "적용 대상", "适用位置", "適用先")
+    }
+    pub fn shell_target_ext(self) -> &'static str {
+        self.pick("Specific Extension (e.g. .mkv)", "특정 확장자 (예: .mkv)", "指定扩展名 (如 .mkv)", "特定の拡張子 (例: .mkv)")
+    }
+    pub fn shell_ext_label(self) -> &'static str {
+        self.pick("Extension", "확장자", "扩展名", "拡張子")
+    }
+    pub fn shell_ext_hint(self) -> &'static str {
+        self.pick("e.g. .mkv, .mp4, .txt", "예: .mkv, .mp4, .txt", "例如: .mkv, .mp4, .txt", "例: .mkv, .mp4, .txt")
+    }
+    pub fn shell_scope_label(self) -> &'static str {
+        self.pick("Scope", "저장 범위", "存储范围", "保存範囲")
+    }
+    pub fn shell_display_name_label(self) -> &'static str {
+        self.pick("Menu Label", "메뉴 표시 이름", "菜单显示名称", "メニュー表示名")
+    }
+    pub fn shell_display_name_hint(self) -> &'static str {
+        self.pick("e.g. mkv2mp4", "예: mkv2mp4", "例如: mkv2mp4", "例: mkv2mp4")
+    }
+    pub fn shell_key_name_label(self) -> &'static str {
+        self.pick("Registry Key Name", "레지스트리 키 이름", "注册表键名", "レジストリキー名")
+    }
+    pub fn shell_key_name_hint(self) -> &'static str {
+        self.pick("Optional (defaults to Menu Label)", "선택 (비우면 표시 이름 사용)", "可选 (留空则使用显示名称)", "任意 (空欄時は表示名を使用)")
+    }
+    pub fn shell_command_label(self) -> &'static str {
+        self.pick("Command", "실행 명령어", "执行命令", "実行コマンド")
+    }
+    pub fn shell_command_hint(self) -> &'static str {
+        self.pick(
+            "e.g. cmd /k c:\\[bat]\\mkv2mp4.bat \"%1\"",
+            "예: cmd /k c:\\[bat]\\mkv2mp4.bat \"%1\"",
+            "例如: cmd /k c:\\[bat]\\mkv2mp4.bat \"%1\"",
+            "例: cmd /k c:\\[bat]\\mkv2mp4.bat \"%1\"",
+        )
+    }
+    pub fn shell_icon_label(self) -> &'static str {
+        self.pick("Icon Path", "아이콘 경로", "图标路径", "アイコンパス")
+    }
+    pub fn shell_icon_hint(self) -> &'static str {
+        self.pick(
+            "Optional (e.g. C:\\path\\app.exe or .ico / .dll,0)",
+            "선택 (예: C:\\Python313\\python.exe 또는 .ico / .dll,0)",
+            "可选 (如 C:\\path\\app.exe 或 .ico / .dll,0)",
+            "任意 (例: C:\\path\\app.exe や .ico / .dll,0)",
+        )
+    }
+    pub fn btn_browse(self) -> &'static str {
+        self.pick("Browse...", "찾아보기...", "浏览...", "参照...")
+    }
+    pub fn shell_helpers_label(self) -> &'static str {
+        self.pick("Quick insert:", "빠른 삽입:", "快捷插入:", "クイック挿入:")
+    }
+    pub fn shell_extended_checkbox(self) -> &'static str {
+        self.pick("Show only on Shift + Right-Click (Extended)", "Shift + 우클릭 시에만 표시 (Extended)", "仅在按住 Shift 右键时显示 (Extended)", "Shift + 右クリック時のみ表示 (Extended)")
+    }
+    pub fn shell_position_label(self) -> &'static str {
+        self.pick("Menu Position", "메뉴 위치", "菜单位置", "メニュー位置")
+    }
+    pub fn pos_default(self) -> &'static str {
+        self.pick("Default", "기본", "默认", "標準")
+    }
+    pub fn pos_top(self) -> &'static str {
+        self.pick("Top", "상단 (Top)", "顶部 (Top)", "上部 (Top)")
+    }
+    pub fn pos_bottom(self) -> &'static str {
+        self.pick("Bottom", "하단 (Bottom)", "底部 (Bottom)", "下部 (Bottom)")
+    }
+    pub fn shell_overwrite_checkbox(self) -> &'static str {
+        self.pick("Overwrite if key already exists", "같은 이름의 키가 이미 있으면 덮어쓰기", "若同名键已存在则覆盖", "同名キーが存在する場合は上書き")
+    }
+    pub fn shell_preview_label(self) -> &'static str {
+        self.pick("Registry path to write:", "등록될 레지스트리 경로:", "将写入的注册表路径:", "書き込まれるレジストリパス:")
+    }
+    pub fn btn_save(self) -> &'static str {
+        self.pick("Save", "저장", "保存", "保存")
+    }
+    pub fn dialog_pick_command_title(self) -> &'static str {
+        self.pick("Select Executable or Script", "실행 파일 또는 스크립트 선택", "选择可执行文件或脚本", "実行ファイルまたはスクリプトを選択")
+    }
+    pub fn dialog_pick_icon_title(self) -> &'static str {
+        self.pick("Select Icon File", "아이콘 파일 선택", "选择图标文件", "アイコンファイルを選択")
+    }
+    pub fn fmt_shell_saved(self, path: &str) -> String {
+        match self {
+            Language::En => format!("Saved Shell command: {path}"),
+            Language::Ko => format!("Shell 명령을 저장했습니다: {path}"),
+            Language::Zh => format!("已保存 Shell 命令: {path}"),
+            Language::Ja => format!("Shell コマンドを保存しました: {path}"),
+        }
+    }
+    pub fn translate_shell_err(self, code: &str) -> String {
+        match code {
+            "display_name_empty" => self.pick("Please enter a Menu Label.", "메뉴 표시 이름을 입력해 주세요.", "请输入菜单显示名称。", "メニュー表示名を入力してください.").into(),
+            "command_empty" => self.pick("Please enter a Command.", "실행 명령어를 입력해 주세요.", "请输入执行命令。", "実行コマンドを入力してください.").into(),
+            "extension_empty" => self.pick("Please enter a file extension (e.g. .mkv).", "확장자를 입력해 주세요 (예: .mkv).", "请输入扩展名 (例如 .mkv)。", "拡張子を入力してください (例: .mkv)。").into(),
+            "extension_invalid" => self.pick("Extension cannot contain spaces or slashes.", "확장자에 공백이나 슬래시를 넣을 수 없습니다.", "扩展名不能包含空格或斜杠。", "拡張子に空白やスラッシュは使用できません。").into(),
+            "key_empty" => self.pick("Registry key name cannot be empty.", "유효한 레지스트리 키 이름을 입력해 주세요.", "注册表键名不能为空。", "有効なレジストリキー名を入力してください。").into(),
+            "key_invalid" => self.pick("Registry key name cannot contain \\ or /.", "레지스트리 키 이름에는 \\ 또는 / 를 넣을 수 없습니다.", "注册表键名不能包含 \\ 或 /。", "レジストリキー名に \\ や / は使用できません。").into(),
+            "already_exists" => self.pick("A key with this name already exists. Enable 'Overwrite' to replace it.", "같은 이름의 레지스트리 키가 이미 존재합니다. 덮어쓰려면 '덮어쓰기'를 체크해 주세요.", "同名注册表键已存在。如需替换请勾选“覆盖”。", "同じ名前のレジストリキーが既に存在します。上書きするにはチェックを入れてください。").into(),
+            other => other.to_string(),
+        }
+    }
 }
 
 #[cfg(test)]

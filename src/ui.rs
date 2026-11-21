@@ -7,14 +7,18 @@ use std::sync::mpsc::{self, Receiver};
 
 use eframe::egui;
 
-use crate::action::{self, ActionReport};
+use crate::action::{
+    self, ActionReport, ShellCommandSpec, ShellMenuPosition, ShellTargetKind,
+};
 use crate::backup::{self, BackupRecord};
 use crate::config::{APP_NAME, APP_VERSION, Config};
+use crate::dialog;
 use crate::i18n::Language;
 use crate::model::{
     Category, ContextEntry, EntryGroup, EntryKind, FilterOptions, build_groups, count_group_totals,
     find_related_unchecked_indices, matches_filter,
 };
+use crate::reg::RegRoot;
 use crate::scanner::{self, ScanResult};
 use crate::system;
 use crate::update::{self, UpdateInfo};
@@ -199,6 +203,8 @@ struct ContextManagerApp {
     include_related_on_delete: bool,
     show_backup_modal: bool,
     show_restart_explorer_modal: bool,
+    shell_editor: Option<ShellCommandSpec>,
+    shell_editor_error: Option<String>,
     backups: Vec<BackupRecord>,
     selected_backup_id: Option<String>,
     first_frame: bool,
@@ -243,6 +249,8 @@ impl ContextManagerApp {
             include_related_on_delete: false,
             show_backup_modal: false,
             show_restart_explorer_modal: false,
+            shell_editor: None,
+            shell_editor_error: None,
             backups: Vec::new(),
             selected_backup_id: None,
             first_frame: true,
@@ -638,6 +646,19 @@ impl ContextManagerApp {
                     if ui.button(lang.btn_backup_restore()).clicked() {
                         self.refresh_backups();
                         self.show_backup_modal = true;
+                    }
+                    if ui.button(lang.btn_add_shell()).clicked() {
+                        let mut spec = ShellCommandSpec::default();
+                        // 현재 선택된 카테고리에 맞춰 기본 대상 자동 설정
+                        spec.target_kind = match self.filter.category {
+                            Category::Directory => ShellTargetKind::Directory,
+                            Category::Background => ShellTargetKind::DirectoryBackground,
+                            Category::Drive => ShellTargetKind::Drive,
+                            Category::FileExtension => ShellTargetKind::CustomExtension,
+                            _ => ShellTargetKind::AllFiles,
+                        };
+                        self.shell_editor = Some(spec);
+                        self.shell_editor_error = None;
                     }
                     let refresh_btn = ui.add_enabled(!self.scanning, egui::Button::new(lang.btn_refresh()));
                     if refresh_btn.clicked() {
@@ -1245,6 +1266,23 @@ impl ContextManagerApp {
                                                 Some(StatusMessage::Info(lang.msg_copied_path().into()));
                                         }
                                         if let Some(ref reg_path) = full_reg {
+                                            if e.kind == EntryKind::ShellVerb {
+                                                if ui.small_button(lang.btn_edit()).clicked() {
+                                                    if let (Some(root), Some(subkey)) =
+                                                        (e.registry_root, e.registry_subkey.as_deref())
+                                                    {
+                                                        match action::load_shell_command(root, subkey) {
+                                                            Ok(spec) => {
+                                                                self.shell_editor = Some(spec);
+                                                                self.shell_editor_error = None;
+                                                            }
+                                                            Err(err) => {
+                                                                self.message = Some(StatusMessage::Error(err));
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
                                             if ui.small_button(lang.btn_open_regedit()).clicked() {
                                                 if let Err(err) = system::open_regedit_at(reg_path) {
                                                     self.message = Some(StatusMessage::Error(err));
@@ -1556,6 +1594,222 @@ impl ContextManagerApp {
         }
     }
 
+    fn shell_command_modal(&mut self, ctx: &egui::Context) {
+        let Some(mut spec) = self.shell_editor.clone() else {
+            return;
+        };
+        let lang = self.lang();
+        let is_edit = spec.existing_subkey.is_some();
+        let mut do_save = false;
+        let mut do_cancel = false;
+
+        let target_label = |k: ShellTargetKind| -> &'static str {
+            match k {
+                ShellTargetKind::AllFiles => lang.tgt_all_files(),
+                ShellTargetKind::Directory => lang.tgt_directory(),
+                ShellTargetKind::DirectoryBackground => lang.tgt_dir_bg(),
+                ShellTargetKind::AllFilesystemObjects => lang.tgt_all_fs(),
+                ShellTargetKind::Drive => lang.tgt_drive(),
+                ShellTargetKind::DesktopBackground => lang.tgt_desktop_bg(),
+                ShellTargetKind::CustomExtension => lang.shell_target_ext(),
+            }
+        };
+        let pos_label = |p: ShellMenuPosition| -> &'static str {
+            match p {
+                ShellMenuPosition::Default => lang.pos_default(),
+                ShellMenuPosition::Top => lang.pos_top(),
+                ShellMenuPosition::Bottom => lang.pos_bottom(),
+            }
+        };
+
+        let resp = egui::Modal::new(egui::Id::unique("shell_command_modal")).show(ctx, |ui| {
+            ui.set_width(580.0);
+            ui.heading(if is_edit {
+                lang.modal_edit_shell_title()
+            } else {
+                lang.modal_add_shell_title()
+            });
+            ui.add_space(6.0);
+
+            egui::Grid::new("shell_editor_grid")
+                .num_columns(2)
+                .spacing([12.0, 8.0])
+                .show(ui, |ui| {
+                    if !is_edit {
+                        ui.label(lang.shell_target_label());
+                        egui::ComboBox::from_id_salt("shell_target_kind")
+                            .selected_text(target_label(spec.target_kind))
+                            .width(360.0)
+                            .show_ui(ui, |ui| {
+                                for &k in ShellTargetKind::ALL {
+                                    ui.selectable_value(&mut spec.target_kind, k, target_label(k));
+                                }
+                            });
+                        ui.end_row();
+
+                        if spec.target_kind == ShellTargetKind::CustomExtension {
+                            ui.label(lang.shell_ext_label());
+                            ui.add(
+                                egui::TextEdit::singleline(&mut spec.custom_extension)
+                                    .hint_text(lang.shell_ext_hint())
+                                    .desired_width(220.0),
+                            );
+                            ui.end_row();
+                        }
+
+                        ui.label(lang.shell_scope_label());
+                        ui.horizontal(|ui| {
+                            ui.radio_value(&mut spec.root, RegRoot::Hkcu, lang.scope_user());
+                            ui.radio_value(&mut spec.root, RegRoot::Hklm, lang.scope_system());
+                        });
+                        ui.end_row();
+                    }
+
+                    ui.label(lang.shell_display_name_label());
+                    ui.add(
+                        egui::TextEdit::singleline(&mut spec.display_name)
+                            .hint_text(lang.shell_display_name_hint())
+                            .desired_width(400.0),
+                    );
+                    ui.end_row();
+
+                    if !is_edit {
+                        ui.label(lang.shell_key_name_label());
+                        ui.add(
+                            egui::TextEdit::singleline(&mut spec.key_name)
+                                .hint_text(lang.shell_key_name_hint())
+                                .desired_width(400.0),
+                        );
+                        ui.end_row();
+                    }
+
+                    ui.label(lang.shell_command_label());
+                    ui.vertical(|ui| {
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                egui::TextEdit::singleline(&mut spec.command)
+                                    .hint_text(lang.shell_command_hint())
+                                    .desired_width(325.0),
+                            );
+                            if ui.button(lang.btn_browse()).clicked() {
+                                if let Some(path) = dialog::pick_command_file(lang.dialog_pick_command_title()) {
+                                    let p_str = path.to_string_lossy();
+                                    let ph = spec.target_kind.default_placeholder();
+                                    let ext = path
+                                        .extension()
+                                        .and_then(|e| e.to_str())
+                                        .unwrap_or("")
+                                        .to_ascii_lowercase();
+                                    spec.command = if ext == "bat" || ext == "cmd" {
+                                        format!("cmd /k \"{p_str}\" \"{ph}\"")
+                                    } else {
+                                        format!("\"{p_str}\" \"{ph}\"")
+                                    };
+                                    if spec.display_name.trim().is_empty() {
+                                        if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                                            spec.display_name = stem.to_string();
+                                        }
+                                    }
+                                }
+                            }
+                        });
+                        ui.horizontal_wrapped(|ui| {
+                            ui.weak(lang.shell_helpers_label());
+                            if ui.small_button("+\"%1\"").clicked() {
+                                append_token(&mut spec.command, "\"%1\"");
+                            }
+                            if ui.small_button("+\"%V\"").clicked() {
+                                append_token(&mut spec.command, "\"%V\"");
+                            }
+                            if ui.small_button("+cmd /k").clicked() {
+                                prepend_prefix(&mut spec.command, "cmd /k ");
+                            }
+                            if ui.small_button("+cmd /c").clicked() {
+                                prepend_prefix(&mut spec.command, "cmd /c ");
+                            }
+                        });
+                    });
+                    ui.end_row();
+
+                    ui.label(lang.shell_icon_label());
+                    ui.horizontal(|ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut spec.icon)
+                                .hint_text(lang.shell_icon_hint())
+                                .desired_width(325.0),
+                        );
+                        if ui.button(lang.btn_browse()).clicked() {
+                            if let Some(path) = dialog::pick_icon_file(lang.dialog_pick_icon_title()) {
+                                spec.icon = path.to_string_lossy().into_owned();
+                            }
+                        }
+                    });
+                    ui.end_row();
+
+                    ui.label(lang.shell_position_label());
+                    egui::ComboBox::from_id_salt("shell_menu_position")
+                        .selected_text(pos_label(spec.position))
+                        .width(160.0)
+                        .show_ui(ui, |ui| {
+                            for &p in ShellMenuPosition::ALL {
+                                ui.selectable_value(&mut spec.position, p, pos_label(p));
+                            }
+                        });
+                    ui.end_row();
+
+                    ui.label("");
+                    ui.checkbox(&mut spec.extended, lang.shell_extended_checkbox());
+                    ui.end_row();
+
+                    if !is_edit {
+                        ui.label("");
+                        ui.checkbox(&mut spec.overwrite, lang.shell_overwrite_checkbox());
+                        ui.end_row();
+                    }
+                });
+
+            ui.add_space(6.0);
+            ui.weak(lang.shell_preview_label());
+            let preview = spec.preview_full_path().unwrap_or_else(|| "-".to_string());
+            ui.monospace(&preview);
+
+            if let Some(ref err) = self.shell_editor_error {
+                ui.add_space(4.0);
+                ui.colored_label(ui.visuals().error_fg_color, err);
+            }
+
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                if ui.button(lang.btn_save()).clicked() {
+                    do_save = true;
+                }
+                if ui.button(lang.btn_cancel()).clicked() {
+                    do_cancel = true;
+                }
+            });
+        });
+
+        if do_save {
+            match action::save_shell_command(&spec) {
+                Ok(saved_path) => {
+                    self.shell_editor = None;
+                    self.shell_editor_error = None;
+                    self.message = Some(StatusMessage::Info(lang.fmt_shell_saved(&saved_path)));
+                    self.start_scan();
+                }
+                Err(code) => {
+                    self.shell_editor = Some(spec);
+                    self.shell_editor_error = Some(lang.translate_shell_err(&code));
+                }
+            }
+        } else if do_cancel || resp.should_close() {
+            self.shell_editor = None;
+            self.shell_editor_error = None;
+        } else {
+            self.shell_editor = Some(spec);
+        }
+    }
+
     fn handle_ready_signal(&mut self, ctx: &egui::Context) {
         let Some(ref out_path) = self.ready_file.clone() else {
             return;
@@ -1607,7 +1861,22 @@ impl eframe::App for ContextManagerApp {
         self.delete_confirm_modal(&ctx);
         self.backup_modal(&ctx);
         self.restart_explorer_modal(&ctx);
+        self.shell_command_modal(&ctx);
         self.handle_ready_signal(&ctx);
+    }
+}
+
+fn append_token(buf: &mut String, token: &str) {
+    if !buf.is_empty() && !buf.ends_with(' ') {
+        buf.push(' ');
+    }
+    buf.push_str(token);
+}
+
+fn prepend_prefix(buf: &mut String, prefix: &str) {
+    let trimmed = buf.trim_start();
+    if !trimmed.to_ascii_lowercase().starts_with(&prefix.to_ascii_lowercase()) {
+        *buf = format!("{prefix}{trimmed}");
     }
 }
 
