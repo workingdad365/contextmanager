@@ -4,7 +4,7 @@
 
 <h1 align="center">ContextManager</h1>
 
-<p align="center">Windows 10 / 11 エクスプローラーのコンテキストメニュー管理ツール（一覧表示・非表示・バックアップ付き削除）<br>v1.1.6</p>
+<p align="center">Windows 10 / 11 エクスプローラーのコンテキストメニュー管理ツール（一覧表示・非表示・バックアップ付き削除）<br>v1.1.7</p>
 
 <p align="center">
   <a href="README.md">English</a> | <a href="README.ko.md">한국어</a> | <a href="README.zh.md">中文(简体)</a> | <b>日本語</b>
