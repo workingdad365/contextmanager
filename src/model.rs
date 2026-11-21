@@ -293,6 +293,7 @@ pub struct FilterOptions {
     pub search: String,
     pub only_orphaned: bool,
     pub only_disabled: bool,
+    pub hide_disabled: bool,
     pub hide_system: bool,
 }
 
@@ -303,6 +304,7 @@ impl Default for FilterOptions {
             search: String::new(),
             only_orphaned: false,
             only_disabled: false,
+            hide_disabled: false,
             hide_system: true,
         }
     }
@@ -320,6 +322,9 @@ pub fn matches_filter(entry: &ContextEntry, filter: &FilterOptions, lang: Langua
         return false;
     }
     if filter.only_disabled && !entry.disabled {
+        return false;
+    }
+    if filter.hide_disabled && entry.disabled {
         return false;
     }
     let q = filter.search.trim().to_ascii_lowercase();
@@ -581,6 +586,16 @@ mod tests {
         };
         assert!(matches_filter(&entries[0], &f, Language::En));
         assert!(!matches_filter(&entries[1], &f, Language::En));
+
+        // 비활성화된 항목 감추기 필터 검증
+        let mut disabled_entry = entries[1].clone();
+        disabled_entry.disabled = true;
+        let f_hide = FilterOptions {
+            hide_disabled: true,
+            ..Default::default()
+        };
+        assert!(!matches_filter(&disabled_entry, &f_hide, Language::En));
+        assert!(matches_filter(&entries[1], &f_hide, Language::En));
     }
 
     #[test]

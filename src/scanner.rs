@@ -500,6 +500,7 @@ impl ScanContext {
                 })
                 .unwrap_or_else(|| short_package_name(&pkg_full_name));
 
+            let pkg_logo = resolve_package_logo(&xml, Path::new(&root_folder), manifest_dir);
             let verbs = parse_manifest_context_menus(&xml);
             for verb in verbs {
                 let clsid = normalize_clsid(&verb.clsid);
@@ -587,7 +588,7 @@ impl ScanContext {
                     clsid_description,
                     menu_labels: Vec::new(),
                     package_name: Some(pkg_full_name.clone()),
-                    icon: None,
+                    icon: pkg_logo.clone(),
                     disabled,
                     is_system,
                     group_key,
@@ -990,6 +991,73 @@ fn extract_xml_tag_text(xml: &str, tag_name: &str) -> Option<String> {
 
 fn short_package_name(pkg_full_name: &str) -> String {
     pkg_full_name.split('_').next().unwrap_or(pkg_full_name).to_string()
+}
+
+/// AppxManifest.xml 에서 Square44x44Logo 또는 <Logo> 경로를 추출해 실제 PNG 파일 경로 탐색
+fn resolve_package_logo(xml: &str, root_folder: &Path, manifest_dir: &Path) -> Option<String> {
+    let mut candidates = Vec::new();
+    if let Some(rel) = extract_xml_attr(xml, "Square44x44Logo") {
+        candidates.push(rel);
+    }
+    if let Some(rel) = extract_xml_tag_text(xml, "Logo") {
+        candidates.push(rel);
+    }
+    for rel in candidates {
+        for base in [manifest_dir, root_folder] {
+            if let Some(found) = find_scaled_asset(base, &rel) {
+                return Some(found.to_string_lossy().into_owned());
+            }
+        }
+    }
+    None
+}
+
+/// Windows MSIX 리소스 스케일 변형(예: logo.png -> logo.targetsize-24.png / logo.scale-100.png) 탐색
+fn find_scaled_asset(base: &Path, rel: &str) -> Option<PathBuf> {
+    let clean = rel.trim().replace('/', "\\");
+    if clean.is_empty() {
+        return None;
+    }
+    let direct = base.join(&clean);
+    if direct.is_file() {
+        return Some(direct);
+    }
+    let rel_path = Path::new(&clean);
+    let parent = rel_path.parent().map(|p| base.join(p)).unwrap_or_else(|| base.to_path_buf());
+    let stem = rel_path.file_stem()?.to_str()?;
+    let ext = rel_path.extension().and_then(|e| e.to_str()).unwrap_or("png");
+
+    for suffix in [
+        "targetsize-24",
+        "targetsize-32",
+        "targetsize-48",
+        "scale-100",
+        "scale-125",
+        "scale-150",
+        "scale-200",
+    ] {
+        let cand = parent.join(format!("{stem}.{suffix}.{ext}"));
+        if cand.is_file() {
+            return Some(cand);
+        }
+    }
+    // 디렉토리 내 동일 stem 접두사로 시작하는 첫 png (예: targetsize-24_altform-unplated)
+    if let Ok(rd) = std::fs::read_dir(&parent) {
+        let prefix = format!("{}.", stem.to_ascii_lowercase());
+        for entry in rd.flatten() {
+            let p = entry.path();
+            if !p.is_file() {
+                continue;
+            }
+            if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
+                let lower = name.to_ascii_lowercase();
+                if lower.starts_with(&prefix) && lower.ends_with(".png") {
+                    return Some(p);
+                }
+            }
+        }
+    }
+    None
 }
 
 /// 패키지 매니페스트 경로 탐색

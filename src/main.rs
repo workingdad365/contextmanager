@@ -5,6 +5,7 @@ mod backup;
 mod config;
 mod dialog;
 mod i18n;
+mod icon;
 mod model;
 mod path_util;
 mod probe;

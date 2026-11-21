@@ -179,6 +179,9 @@ impl Language {
     pub fn filter_disabled(self) -> &'static str {
         self.pick("Disabled only", "비활성화됨만", "仅已禁用", "無効のみ")
     }
+    pub fn filter_hide_disabled(self) -> &'static str {
+        self.pick("Hide disabled", "비활성화된 항목 감추기", "隐藏已禁用项", "無効項目を隠す")
+    }
     pub fn filter_hide_system(self) -> &'static str {
         self.pick("Hide Microsoft built-in", "Microsoft 기본 항목 숨기기", "隐藏 Microsoft 内置项", "Microsoft 標準項目を隠す")
     }

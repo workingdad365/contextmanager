@@ -4,7 +4,7 @@
 
 <h1 align="center">ContextManager</h1>
 
-<p align="center">Windows 10 / 11 资源管理器右键菜单管理工具（查看、禁用、自动备份与清理）<br>v1.1.7</p>
+<p align="center">Windows 10 / 11 资源管理器右键菜单管理工具（查看、禁用、自动备份与清理）<br>v1.2.0</p>
 
 <p align="center">
   <a href="README.md">English</a> | <a href="README.ko.md">한국어</a> | <b>中文(简体)</b> | <a href="README.ja.md">日本語</a>
@@ -27,6 +27,7 @@ ContextManager 可集中列出 Windows 10 / 11 文件资源管理器中的所有
   - 发送到（`SendTo`）
   - 新建菜单（`ShellNew`）
 - **按应用分组与批量清理**: 自动将同一程序分散在多个注册表位置的菜单项归为一组；即使在单个分类中操作，也会提示其他分类下的关联数量，并可在删除确认窗中一键全选清理。
+- **项目图标显示与智能筛选**: 异步提取并在每项左侧显示应用/DLL/PNG/扩展名图标，支持 **仅残留项**、**仅已禁用**、**隐藏已禁用项** 与 **隐藏 Microsoft 内置项** 快速筛选。
 - **残留项自动检测**: 检查目标可执行文件或 DLL 是否仍存在于磁盘，将缺失文件的条目高亮标记为 `[文件缺失 - 残留项]`。
 - **无损禁用（隐藏）与重新启用**:
   - `Shell 命令`: 切换 `LegacyDisable` 键值

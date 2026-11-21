@@ -14,6 +14,7 @@ use crate::backup::{self, BackupRecord};
 use crate::config::{APP_NAME, APP_VERSION, Config};
 use crate::dialog;
 use crate::i18n::Language;
+use crate::icon::IconCache;
 use crate::model::{
     Category, ContextEntry, EntryGroup, EntryKind, FilterOptions, build_groups, count_group_totals,
     count_hidden_selected, find_related_unchecked_indices, find_shared_clsid_peers, matches_filter,
@@ -177,6 +178,7 @@ struct ContextManagerApp {
     config: Config,
     persist_lang: bool,
     font_cache: FontCache,
+    icon_cache: IconCache,
 
     entries: Vec<ContextEntry>,
     scanning: bool,
@@ -231,11 +233,13 @@ impl ContextManagerApp {
         ready_file: Option<PathBuf>,
     ) -> Self {
         let auto_update = ready_file.is_none();
+        let icon_cache = IconCache::new(ctx.clone());
         let mut app = Self {
             ctx,
             config,
             persist_lang,
             font_cache,
+            icon_cache,
             entries: Vec::new(),
             scanning: false,
             scan_rx: None,
@@ -515,6 +519,9 @@ impl ContextManagerApp {
             if self.filter.hide_system && e.is_system && !e.is_orphaned() {
                 continue;
             }
+            if self.filter.hide_disabled && e.disabled {
+                continue;
+            }
             if cat == Category::All || e.category == cat {
                 total += 1;
                 if e.is_orphaned() {
@@ -792,7 +799,20 @@ impl ContextManagerApp {
             ui.horizontal(|ui| {
                 ui.checkbox(&mut self.filter.only_orphaned, lang.filter_orphaned())
                     .on_hover_text(lang.filter_orphaned_tip());
-                ui.checkbox(&mut self.filter.only_disabled, lang.filter_disabled());
+                if ui
+                    .checkbox(&mut self.filter.only_disabled, lang.filter_disabled())
+                    .changed()
+                    && self.filter.only_disabled
+                {
+                    self.filter.hide_disabled = false;
+                }
+                if ui
+                    .checkbox(&mut self.filter.hide_disabled, lang.filter_hide_disabled())
+                    .changed()
+                    && self.filter.hide_disabled
+                {
+                    self.filter.only_disabled = false;
+                }
                 ui.checkbox(&mut self.filter.hide_system, lang.filter_hide_system())
                     .on_hover_text(lang.filter_hide_system_tip());
 
@@ -1109,6 +1129,10 @@ impl ContextManagerApp {
                         }
                     }
 
+                    // 대표 항목의 아이콘을 20x20 으로 표시 (없으면 정렬 유지용 빈 공간)
+                    let rep_entry = &self.entries[group.entry_indices[0]];
+                    render_entry_icon(ui, self.icon_cache.get_for_entry(rep_entry), 20.0);
+
                     ui.vertical(|ui| {
                         ui.horizontal_wrapped(|ui| {
                             let mut title = egui::RichText::new(&group.display_name).strong();
@@ -1203,6 +1227,8 @@ impl ContextManagerApp {
                         }
                     }
 
+                    render_entry_icon(ui, self.icon_cache.get_for_entry(entry), 18.0);
+
                     ui.vertical(|ui| {
                         ui.horizontal_wrapped(|ui| {
                             let mut title = egui::RichText::new(&entry.display_name).strong();
@@ -1295,7 +1321,10 @@ impl ContextManagerApp {
                     .id_salt("detail_scroll")
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        ui.heading(&first.display_name);
+                        ui.horizontal(|ui| {
+                            render_entry_icon(ui, self.icon_cache.get_for_entry(&first), 24.0);
+                            ui.heading(&first.display_name);
+                        });
                         ui.add_space(4.0);
 
                         egui::Grid::new("detail_meta")
@@ -2059,6 +2088,10 @@ impl ContextManagerApp {
             return;
         };
         if let Some(rem) = self.ready_countdown {
+            if self.icon_cache.has_pending() {
+                ctx.request_repaint();
+                return;
+            }
             if rem > 0 {
                 self.ready_countdown = Some(rem - 1);
                 ctx.request_repaint();
@@ -2068,6 +2101,15 @@ impl ContextManagerApp {
                 self.ready_countdown = None;
             }
         }
+    }
+}
+
+fn render_entry_icon(ui: &mut egui::Ui, tex: Option<&egui::TextureHandle>, size: f32) {
+    let sz = egui::vec2(size, size);
+    if let Some(t) = tex {
+        ui.add(egui::Image::new((t.id(), sz)).fit_to_exact_size(sz));
+    } else {
+        ui.allocate_space(sz);
     }
 }
 
@@ -2085,6 +2127,7 @@ impl eframe::App for ContextManagerApp {
         self.poll_scan();
         self.poll_probe();
         self.poll_update();
+        self.icon_cache.poll(ui.ctx());
 
         self.update_banner(ui);
         self.explorer_restart_banner(ui);

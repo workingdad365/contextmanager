@@ -4,7 +4,7 @@
 
 <h1 align="center">ContextManager</h1>
 
-<p align="center">Windows 10 / 11 File Explorer Context Menu Manager (Inspect, Disable, Backup & Remove)<br>v1.1.7</p>
+<p align="center">Windows 10 / 11 File Explorer Context Menu Manager (Inspect, Disable, Backup & Remove)<br>v1.2.0</p>
 
 <p align="center">
   <b>English</b> | <a href="README.ko.md">한국어</a> | <a href="README.zh.md">中文(简体)</a> | <a href="README.ja.md">日本語</a>
@@ -27,6 +27,7 @@ ContextManager lists every right-click context menu entry in Windows 10 and Wind
   - Send To (`SendTo`)
   - New Menu (`ShellNew`)
 - **Group by App & Bulk Cleanup**: Automatically groups entries sharing the same executable/DLL and display name across multiple registry locations. Even when working inside a single category, shows total locations across all categories and lets you include them all in the removal dialog.
+- **Entry Icons & Smart Filters**: Displays each entry's actual app/DLL/PNG/extension icon on the left with lazy background loading, plus quick filters for **Orphaned only**, **Disabled only**, **Hide disabled**, and **Hide Microsoft built-in**.
 - **Orphaned Entry Detection**: Verifies whether the target executable or DLL still exists on disk and highlights missing entries as `[Missing File - Orphaned]`.
 - **Non-Destructive Disable (Hide) & Re-enable**:
   - `Shell Verb`: toggles `LegacyDisable`
