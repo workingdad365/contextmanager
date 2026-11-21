@@ -13,6 +13,7 @@ use crate::system;
 #[derive(Debug, Default)]
 pub struct ActionReport {
     pub succeeded: usize,
+    pub succeeded_ids: Vec<String>,
     pub notes: Vec<String>,
     pub errors: Vec<String>,
 }
@@ -22,7 +23,10 @@ pub fn set_entries_disabled(entries: &[&ContextEntry], disable: bool) -> ActionR
     let mut report = ActionReport::default();
     for entry in entries {
         match set_single_disabled(entry, disable) {
-            Ok(()) => report.succeeded += 1,
+            Ok(()) => {
+                report.succeeded += 1;
+                report.succeeded_ids.push(entry.id.clone());
+            }
             Err(e) => report.errors.push(format!("[{}] {e}", entry.display_name)),
         }
     }
@@ -163,7 +167,10 @@ pub fn delete_entries_with_backup(
         };
 
         match res {
-            Ok(()) => report.succeeded += 1,
+            Ok(()) => {
+                report.succeeded += 1;
+                report.succeeded_ids.push(entry.id.clone());
+            }
             Err(e) => report.errors.push(format!("[{}] {e}", entry.display_name)),
         }
     }
@@ -466,10 +473,12 @@ mod tests {
 
         let rep = set_entries_disabled(&[&entry], true);
         assert_eq!(rep.succeeded, 1);
+        assert_eq!(rep.succeeded_ids, vec!["t1"]);
         assert!(RegKey::open_read(RegRoot::Hkcu, &subkey).unwrap().value_exists("LegacyDisable"));
 
         let rep = set_entries_disabled(&[&entry], false);
         assert_eq!(rep.succeeded, 1);
+        assert_eq!(rep.succeeded_ids, vec!["t1"]);
         assert!(!RegKey::open_read(RegRoot::Hkcu, &subkey).unwrap().value_exists("LegacyDisable"));
 
         let _ = reg::delete_tree(RegRoot::Hkcu, &base);

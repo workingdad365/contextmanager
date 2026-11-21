@@ -456,6 +456,22 @@ pub fn find_related_unchecked_indices(entries: &[ContextEntry], checked_ids: &Ha
         .collect()
 }
 
+/// 현재 필터(카테고리/검색어/체크박스)에 표시되지 않지만 선택(체크)되어 있는 항목 수 계산
+pub fn count_hidden_selected(
+    entries: &[ContextEntry],
+    checked_ids: &HashSet<String>,
+    filter: &FilterOptions,
+    lang: Language,
+) -> usize {
+    if checked_ids.is_empty() {
+        return 0;
+    }
+    entries
+        .iter()
+        .filter(|e| checked_ids.contains(&e.id) && !matches_filter(e, filter, lang))
+        .count()
+}
+
 /// 전체 항목 기준 group_key 별 총 등록 위치 개수 계산
 pub fn count_group_totals(entries: &[ContextEntry]) -> HashMap<String, usize> {
     let mut counts = HashMap::new();
@@ -658,5 +674,35 @@ mod tests {
             Some("Acrobat Elements Context Menu")
         );
         assert_eq!(groups[0].menu_labels, vec!["Acrobat에서 파일 결합..."]);
+    }
+
+    #[test]
+    fn counts_selected_entries_hidden_by_current_filter() {
+        let entries = vec![
+            sample_entry("e1", "Alpha", TargetLabel::Directory, "C:\\Apps\\a.exe", true, Category::Directory),
+            sample_entry("e2", "Beta", TargetLabel::Directory, "C:\\Apps\\b.exe", true, Category::Directory),
+            sample_entry("e3", "Gamma", TargetLabel::AllFiles, "C:\\Apps\\c.exe", true, Category::AllFiles),
+            sample_entry("e4", "Delta", TargetLabel::Directory, "C:\\Apps\\d.exe", true, Category::Directory),
+        ];
+        let mut checked = HashSet::new();
+        checked.insert("e1".to_string());
+        checked.insert("e2".to_string());
+        checked.insert("e3".to_string());
+        checked.insert("e4".to_string());
+
+        let f_all = FilterOptions::default();
+        assert_eq!(count_hidden_selected(&entries, &checked, &f_all, Language::Ko), 0);
+
+        let f_search = FilterOptions {
+            search: "delta".into(),
+            ..Default::default()
+        };
+        assert_eq!(count_hidden_selected(&entries, &checked, &f_search, Language::Ko), 3);
+
+        let f_cat = FilterOptions {
+            category: Category::Directory,
+            ..Default::default()
+        };
+        assert_eq!(count_hidden_selected(&entries, &checked, &f_cat, Language::Ko), 1);
     }
 }

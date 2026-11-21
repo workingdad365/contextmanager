@@ -16,7 +16,7 @@ use crate::dialog;
 use crate::i18n::Language;
 use crate::model::{
     Category, ContextEntry, EntryGroup, EntryKind, FilterOptions, build_groups, count_group_totals,
-    find_related_unchecked_indices, find_shared_clsid_peers, matches_filter,
+    count_hidden_selected, find_related_unchecked_indices, find_shared_clsid_peers, matches_filter,
 };
 use crate::probe;
 use crate::reg::RegRoot;
@@ -540,6 +540,13 @@ impl ContextManagerApp {
         let restart_kinds = collect_restart_kinds(&targets, lang);
         let related_remaining = find_related_unchecked_indices(&self.entries, &self.checked_ids).len();
         let report = action::set_entries_disabled(&targets, disable);
+        if report.errors.is_empty() {
+            self.checked_ids.clear();
+        } else {
+            for id in &report.succeeded_ids {
+                self.checked_ids.remove(id);
+            }
+        }
         let verb = if disable { lang.verb_disabled() } else { lang.verb_enabled() };
         self.report_to_message(verb, &report, None);
         if report.errors.is_empty() && related_remaining > 0 {
@@ -857,6 +864,7 @@ impl ContextManagerApp {
         let lang = self.lang();
         let checked = self.checked_entries();
         let selected_count = checked.len();
+        let hidden_selected_count = count_hidden_selected(&self.entries, &self.checked_ids, &self.filter, lang);
         let can_disable_any = checked.iter().any(|e| !e.disabled);
         let can_enable_any = checked.iter().any(|e| e.disabled);
         let deletable_count = checked.iter().filter(|e| e.can_delete()).count();
@@ -872,6 +880,13 @@ impl ContextManagerApp {
             ui.add_space(6.0);
             ui.horizontal_wrapped(|ui| {
                 ui.strong(lang.fmt_selected_count(selected_count));
+                if hidden_selected_count > 0 {
+                    ui.colored_label(
+                        ui.visuals().warn_fg_color,
+                        lang.fmt_hidden_selected_warn(hidden_selected_count),
+                    )
+                    .on_hover_text(lang.hidden_selected_warn_tip());
+                }
                 ui.separator();
                 if ui
                     .add_enabled(

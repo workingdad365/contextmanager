@@ -518,6 +518,22 @@ impl Language {
             Language::Ja => format!("選択中: {count} 件"),
         }
     }
+    pub fn fmt_hidden_selected_warn(self, count: usize) -> String {
+        match self {
+            Language::En => format!("(incl. {count} outside current view)"),
+            Language::Ko => format!("(현재 목록 외 {count}개 포함)"),
+            Language::Zh => format!("(含当前列表外 {count} 项)"),
+            Language::Ja => format!("(現在の表示外 {count} 件を含む)"),
+        }
+    }
+    pub fn hidden_selected_warn_tip(self) -> &'static str {
+        self.pick(
+            "Some selected items are hidden by the current search or category filter and will also be affected by bulk actions.",
+            "현재 검색어나 카테고리 필터에 표시되지 않는 선택 항목이 포함되어 있으며, 일괄 작업 시 함께 처리됩니다.",
+            "当前已选项目中包含被搜索或分类筛选隐藏的项，执行批量操作时会一并处理。",
+            "現在の検索や分類フィルターで非表示になっている選択項目が含まれており、一括操作時に一緒に処理されます。",
+        )
+    }
     pub fn btn_disable(self) -> &'static str {
         self.pick("Disable (Hide)", "비활성화 (숨기기)", "禁用 (隐藏)", "無効化 (非表示)")
     }
