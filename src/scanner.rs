@@ -274,16 +274,19 @@ impl ScanContext {
                 .filter(|s| !s.trim().is_empty());
             let clsid = handler_clsid.or(delegate_clsid).map(|c| normalize_clsid(&c)).filter(|c| !c.is_empty());
 
+            let clsid_info = clsid.as_deref().and_then(|c| self.lookup_clsid(c));
+            let clsid_description = clsid_info
+                .as_ref()
+                .and_then(|i| i.name.as_deref())
+                .map(resolve_mui_string)
+                .filter(|s| !s.is_empty());
+
             // 실제 실행 파일 / DLL 대상 추출
             let mut extracted_path = command.as_deref().and_then(extract_executable_from_command);
 
             if extracted_path.is_none() {
-                if let Some(ref c) = clsid {
-                    if let Some(info) = self.lookup_clsid(c) {
-                        if let Some(srv) = info.server_path {
-                            extracted_path = extract_server_path(&srv).or(Some(srv));
-                        }
-                    }
+                if let Some(srv) = clsid_info.as_ref().and_then(|i| i.server_path.as_deref()) {
+                    extracted_path = extract_server_path(srv).or_else(|| Some(srv.to_string()));
                 }
             }
 
@@ -351,6 +354,7 @@ impl ScanContext {
                 resolved_target,
                 target_exists,
                 clsid,
+                clsid_description,
                 package_name: None,
                 icon,
                 disabled,
@@ -393,10 +397,15 @@ impl ScanContext {
             }
 
             let info = self.lookup_clsid(&clsid);
+            let clsid_description = info
+                .as_ref()
+                .and_then(|i| i.name.as_deref())
+                .map(resolve_mui_string)
+                .filter(|s| !s.is_empty());
             let display_name = if !handler_name.starts_with('{') {
                 clean_mnemonic(&handler_name)
-            } else if let Some(n) = info.as_ref().and_then(|i| i.name.as_deref()) {
-                resolve_mui_string(n)
+            } else if let Some(ref desc) = clsid_description {
+                desc.clone()
             } else {
                 clsid.clone()
             };
@@ -439,6 +448,7 @@ impl ScanContext {
                 resolved_target,
                 target_exists,
                 clsid: Some(clsid),
+                clsid_description,
                 package_name: None,
                 icon: None,
                 disabled,
@@ -550,6 +560,12 @@ impl ScanContext {
                     &id,
                 );
 
+                let clsid_description = self
+                    .lookup_clsid(&clsid)
+                    .and_then(|i| i.name)
+                    .map(|n| resolve_mui_string(&n))
+                    .filter(|s| !s.is_empty());
+
                 self.push_entry(ContextEntry {
                     id,
                     display_name,
@@ -566,6 +582,7 @@ impl ScanContext {
                     resolved_target,
                     target_exists,
                     clsid: Some(clsid),
+                    clsid_description,
                     package_name: Some(pkg_full_name.clone()),
                     icon: None,
                     disabled,
@@ -673,6 +690,7 @@ impl ScanContext {
                 resolved_target,
                 target_exists,
                 clsid: None,
+                clsid_description: None,
                 package_name: None,
                 icon: None,
                 disabled,
@@ -842,6 +860,7 @@ impl ScanContext {
             resolved_target,
             target_exists,
             clsid: None,
+            clsid_description: None,
             package_name: None,
             icon: None,
             disabled,

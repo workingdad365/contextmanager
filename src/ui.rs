@@ -1054,6 +1054,11 @@ impl ContextManagerApp {
                             if ui.add(egui::Button::selectable(is_focused, title)).clicked() {
                                 self.focused = Some(FocusedTarget::Group(group.key.clone()));
                             }
+                            if let Some(ref desc) = group.clsid_description {
+                                if !desc.eq_ignore_ascii_case(&group.display_name) {
+                                    ui.weak(format!("({desc})"));
+                                }
+                            }
 
                             if group.all_orphaned {
                                 ui.colored_label(error_color, lang.badge_all_orphaned());
@@ -1138,6 +1143,11 @@ impl ContextManagerApp {
                             }
                             if ui.add(egui::Button::selectable(is_focused, title)).clicked() {
                                 self.focused = Some(FocusedTarget::Entry(entry.id.clone()));
+                            }
+                            if let Some(ref desc) = entry.clsid_description {
+                                if !desc.eq_ignore_ascii_case(&entry.display_name) {
+                                    ui.weak(format!("({desc})"));
+                                }
                             }
                             if entry.is_orphaned() {
                                 ui.colored_label(error_color, lang.badge_orphaned_short());
@@ -1242,6 +1252,11 @@ impl ContextManagerApp {
                                 if let Some(ref clsid) = first.clsid {
                                     ui.weak("CLSID");
                                     ui.monospace(clsid);
+                                    ui.end_row();
+                                }
+                                if let Some(ref desc) = first.clsid_description {
+                                    ui.weak(lang.meta_clsid_desc());
+                                    ui.label(desc);
                                     ui.end_row();
                                 }
                                 if let Some(ref pkg) = first.package_name {

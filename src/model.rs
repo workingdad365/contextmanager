@@ -172,6 +172,7 @@ pub struct ContextEntry {
     pub resolved_target: Option<String>,
     pub target_exists: Option<bool>,
     pub clsid: Option<String>,
+    pub clsid_description: Option<String>,
     pub package_name: Option<String>,
     pub icon: Option<String>,
     pub disabled: bool,
@@ -259,6 +260,7 @@ pub struct EntryGroup {
     pub key: String,
     pub display_name: String,
     pub kind: EntryKind,
+    pub clsid_description: Option<String>,
     pub resolved_target: Option<String>,
     pub entry_indices: Vec<usize>,
     pub any_orphaned: bool,
@@ -337,6 +339,14 @@ pub fn matches_filter(entry: &ContextEntry, filter: &FilterOptions, lang: Langua
                 .as_deref()
                 .is_some_and(|s| s.to_ascii_lowercase().contains(&q))
             || entry
+                .clsid
+                .as_deref()
+                .is_some_and(|s| s.to_ascii_lowercase().contains(&q))
+            || entry
+                .clsid_description
+                .as_deref()
+                .is_some_and(|s| s.to_ascii_lowercase().contains(&q))
+            || entry
                 .package_name
                 .as_deref()
                 .is_some_and(|s| s.to_ascii_lowercase().contains(&q));
@@ -377,10 +387,15 @@ pub fn build_groups(entries: &[ContextEntry], filtered_indices: &[usize], lang: 
                 lang.fmt_summary_more(&targets[0], &targets[1], targets.len() - 2)
             };
 
+            let clsid_description = indices
+                .iter()
+                .find_map(|&i| entries[i].clsid_description.clone());
+
             EntryGroup {
                 key,
                 display_name: first.display_name.clone(),
                 kind: first.kind,
+                clsid_description,
                 resolved_target: first.resolved_target.clone(),
                 entry_indices: indices,
                 any_orphaned,
@@ -491,6 +506,7 @@ mod tests {
             resolved_target: Some(exe.into()),
             target_exists: Some(exists),
             clsid: None,
+            clsid_description: None,
             package_name: None,
             icon: None,
             disabled: false,
@@ -582,5 +598,39 @@ mod tests {
         let mut orphan_pkg = e1;
         orphan_pkg.target_exists = Some(false);
         assert!(orphan_pkg.can_delete());
+    }
+
+    #[test]
+    fn filter_matches_clsid_and_clsid_description_and_propagates_to_group() {
+        let mut entry = sample_entry(
+            "hklm_folder_acrobat",
+            "Adobe.Acrobat.ContextMenu",
+            TargetLabel::FolderVirtual,
+            "C:\\Program Files\\Adobe\\Acrobat DC\\Acrobat Elements\\ContextMenuShim64.dll",
+            true,
+            Category::Directory,
+        );
+        entry.kind = EntryKind::ShellEx;
+        entry.clsid = Some("{A6595CD1-BF77-430A-A452-18696685F7C7}".into());
+        entry.clsid_description = Some("Acrobat Elements Context Menu".into());
+
+        let f_desc = FilterOptions {
+            search: "elements context".into(),
+            ..Default::default()
+        };
+        assert!(matches_filter(&entry, &f_desc, Language::Ko));
+
+        let f_clsid = FilterOptions {
+            search: "a6595cd1".into(),
+            ..Default::default()
+        };
+        assert!(matches_filter(&entry, &f_clsid, Language::Ko));
+
+        let groups = build_groups(&[entry], &[0], Language::Ko);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(
+            groups[0].clsid_description.as_deref(),
+            Some("Acrobat Elements Context Menu")
+        );
     }
 }

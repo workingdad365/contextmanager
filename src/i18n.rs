@@ -428,6 +428,9 @@ impl Language {
     pub fn meta_package(self) -> &'static str {
         self.pick("Package", "패키지", "应用包", "パッケージ")
     }
+    pub fn meta_clsid_desc(self) -> &'static str {
+        self.pick("CLSID Description", "CLSID 설명", "CLSID 说明", "CLSID 説明")
+    }
     pub fn file_exists_ok(self) -> &'static str {
         self.pick("File exists", "실제 파일 존재함", "文件存在", "ファイルが存在します")
     }
