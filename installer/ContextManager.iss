@@ -3,7 +3,7 @@
 ; 사용자별 설치: %LocalAppData%\Programs\ContextManager
 
 #ifndef AppVersion
-  #define AppVersion "1.1.5"
+  #define AppVersion "1.1.6"
 #endif
 #ifndef BuildDir
   #define BuildDir "..\target\release"
