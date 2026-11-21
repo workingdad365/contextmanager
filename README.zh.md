@@ -4,7 +4,7 @@
 
 <h1 align="center">ContextManager</h1>
 
-<p align="center">Windows 10 / 11 资源管理器右键菜单管理工具（查看、禁用、自动备份与清理）<br>v1.0.0</p>
+<p align="center">Windows 10 / 11 资源管理器右键菜单管理工具（查看、禁用、自动备份与清理）<br>v1.0.1</p>
 
 <p align="center">
   <a href="README.md">English</a> | <a href="README.ko.md">한국어</a> | <b>中文(简体)</b> | <a href="README.ja.md">日本語</a>
