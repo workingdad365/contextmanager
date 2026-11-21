@@ -657,12 +657,36 @@ impl Language {
             Language::Ja => format!("他の {related} 箇所も一緒にすべて削除 (合計 {total} 箇所)"),
         }
     }
-    pub fn fmt_modal_win11_note(self, count: usize) -> String {
+    pub fn btn_remove_disabled_hide_only_tip(self) -> &'static str {
+        self.pick(
+            "Selected item(s) belong to installed Windows 11 app packages and cannot be deleted. Use 'Disable (Hide)' instead.",
+            "선택한 항목은 정상 설치된 Windows 11 앱 패키지이므로 삭제할 수 없으며, '비활성화 (숨기기)'만 가능합니다.",
+            "所选项属于正常安装的 Windows 11 应用包，无法删除，仅支持“禁用 (隐藏)”。",
+            "選択した項目は正常にインストールされた Windows 11 パッケージのため削除できません。「無効化 (非表示)」のみ可能です。",
+        )
+    }
+    pub fn hide_only_hint_inline(self) -> &'static str {
+        self.pick(
+            "(Hide only - installed Win11 package cannot be deleted)",
+            "(숨기기 전용 - 설치된 Win11 패키지는 삭제 불가)",
+            "(仅支持隐藏 - 已安装的 Win11 应用包不可删除)",
+            "(非表示のみ - インストール済み Win11 パッケージは削除不可)",
+        )
+    }
+    pub fn detail_hide_only_notice(self) -> &'static str {
+        self.pick(
+            "Note: This item is part of an installed Windows 11 app package. It cannot be deleted directly; use 'Disable (Hide)' to hide it from Explorer.",
+            "안내: 정상 설치된 Windows 11 앱 패키지의 메뉴 항목이므로 삭제할 수 없으며, '비활성화 (숨기기)'만 가능합니다.",
+            "提示: 此项属于正常安装的 Windows 11 应用包，无法直接删除，仅支持通过“禁用 (隐藏)”将其从右键菜单中隐藏。",
+            "案内: インストール済みの Windows 11 アプリパッケージ項目のため削除できません。「無効化 (非表示)」のみ利用できます。",
+        )
+    }
+    pub fn fmt_modal_win11_skipped(self, count: usize) -> String {
         match self {
-            Language::En => format!("{count} active Windows 11 packaged item(s) belong to installed apps and will be added to the Blocked (hidden) list instead of uninstalling the app."),
-            Language::Ko => format!("정상 설치된 Windows 11 패키지 메뉴 {count}건은 앱 손상을 막기 위해 패키지 삭제 대신 차단(숨김) 목록에 등록됩니다."),
-            Language::Zh => format!("{count} 个正常安装的 Windows 11 应用包菜单为防止损坏应用，将添加到阻止（隐藏）列表而不卸载应用。"),
-            Language::Ja => format!("正常にインストールされた Windows 11 パッケージ項目 {count} 件はアプリ破損を防ぐため、アンインストールせずブロック（非表示）一覧へ登録されます。"),
+            Language::En => format!("{count} installed Windows 11 packaged item(s) cannot be deleted and will be skipped. Use 'Disable (Hide)' to hide them instead."),
+            Language::Ko => format!("정상 설치된 Windows 11 패키지 항목 {count}건은 삭제할 수 없으므로 제외됩니다. 숨기려면 '비활성화 (숨기기)'를 사용해 주세요."),
+            Language::Zh => format!("{count} 个正常安装的 Windows 11 应用包项无法删除，将被跳过。如需隐藏请使用“禁用 (隐藏)”。"),
+            Language::Ja => format!("正常にインストールされた Windows 11 パッケージ項目 {count} 件は削除できないためスキップされます。隠すには「無効化 (非表示)」を使用してください。"),
         }
     }
     pub fn fmt_modal_win11_orphan_remove(self, count: usize) -> String {

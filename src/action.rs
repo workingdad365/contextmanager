@@ -105,15 +105,16 @@ pub fn delete_entries_with_backup(
     entries: &[&ContextEntry],
     backup_dir: &Path,
 ) -> Result<(BackupRecord, ActionReport), String> {
-    if entries.is_empty() {
-        return Err("삭제할 항목이 선택되지 않았습니다.".into());
+    let deletable: Vec<&ContextEntry> = entries.iter().copied().filter(|e| e.can_delete()).collect();
+    if deletable.is_empty() {
+        return Err("삭제할 수 있는 항목이 없습니다. (정상 설치된 Windows 11 패키지 항목은 숨기기만 가능합니다.)".into());
     }
 
-    let record = backup::create_backup(entries, backup_dir)?;
+    let record = backup::create_backup(&deletable, backup_dir)?;
     let mut report = ActionReport::default();
     let mut removed_packages: HashSet<String> = HashSet::new();
 
-    for entry in entries {
+    for entry in &deletable {
         let res = match entry.kind {
             EntryKind::ShellVerb | EntryKind::ShellEx | EntryKind::ShellNew => {
                 match (entry.registry_root, entry.registry_subkey.as_deref()) {
@@ -135,41 +136,28 @@ pub fn delete_entries_with_backup(
                 }
             }
             EntryKind::Win11Packaged => {
-                if entry.is_orphaned() {
-                    // 파일이 없는 잔여 Sparse/MSIX 패키지는 Remove-AppxPackage 로 완전히 제거
-                    if let Some(pkg) = entry.package_name.as_deref() {
-                        let pkg_key = pkg.to_ascii_lowercase();
-                        let r = if removed_packages.contains(&pkg_key) {
-                            Ok(())
-                        } else {
-                            let res = system::remove_appx_package(pkg);
-                            if res.is_ok() {
-                                removed_packages.insert(pkg_key);
-                            }
-                            res
-                        };
-                        if r.is_ok() {
-                            // 잔여 Blocked CLSID 항목도 함께 정리
-                            if let Some(clsid) = entry.clsid.as_deref() {
-                                if let Ok(k) = RegKey::open_write(RegRoot::Hkcu, BLOCKED_SUBKEY) {
-                                    let _ = k.delete_value(clsid);
-                                }
+                // can_delete() 를 통과한 항목은 파일이 없는 잔여 Sparse/MSIX 패키지뿐임
+                if let Some(pkg) = entry.package_name.as_deref() {
+                    let pkg_key = pkg.to_ascii_lowercase();
+                    let r = if removed_packages.contains(&pkg_key) {
+                        Ok(())
+                    } else {
+                        let res = system::remove_appx_package(pkg);
+                        if res.is_ok() {
+                            removed_packages.insert(pkg_key);
+                        }
+                        res
+                    };
+                    if r.is_ok() {
+                        if let Some(clsid) = entry.clsid.as_deref() {
+                            if let Ok(k) = RegKey::open_write(RegRoot::Hkcu, BLOCKED_SUBKEY) {
+                                let _ = k.delete_value(clsid);
                             }
                         }
-                        r
-                    } else {
-                        set_single_disabled(entry, true)
-                    }
-                } else {
-                    // 정상 설치된 MSIX/Sparse 패키지는 앱 손상을 막기 위해 Blocked 키로 숨김 처리
-                    let r = set_single_disabled(entry, true);
-                    if r.is_ok() {
-                        report.notes.push(format!(
-                            "[{}] Windows 11 패키지 메뉴는 OS 보호 영역이므로 차단(숨김) 목록에 등록했습니다.",
-                            entry.display_name
-                        ));
                     }
                     r
+                } else {
+                    Err("패키지 이름 정보가 없습니다.".into())
                 }
             }
         };

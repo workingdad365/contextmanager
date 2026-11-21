@@ -184,6 +184,15 @@ impl ContextEntry {
         self.target_exists == Some(false)
     }
 
+    /// 영구 제거(삭제)가 가능한 항목인지 여부
+    /// 정상 설치된 Windows 11 앱 패키지는 앱 보호를 위해 숨김(비활성화)만 허용하고 삭제는 불가
+    pub fn can_delete(&self) -> bool {
+        match self.kind {
+            EntryKind::Win11Packaged => self.is_orphaned(),
+            EntryKind::ShellVerb | EntryKind::ShellEx | EntryKind::SendTo | EntryKind::ShellNew => true,
+        }
+    }
+
     pub fn target_text(&self, lang: Language) -> String {
         self.target_label.display(lang)
     }
@@ -567,5 +576,11 @@ mod tests {
         let entries = vec![e1.clone(), e2.clone()];
         let peers = find_shared_clsid_peers(&entries, "{3282E233-C5D3-4533-9B25-44B8AAAFACFA}", &e1.group_key);
         assert_eq!(peers, vec!["Adobe Acrobat (CreateAdobePDF)"]);
+
+        // 정상 설치된 Win11 패키지는 삭제 불가(숨김 전용), 파일 없는 잔여 패키지만 삭제 가능
+        assert!(!e1.can_delete());
+        let mut orphan_pkg = e1;
+        orphan_pkg.target_exists = Some(false);
+        assert!(orphan_pkg.can_delete());
     }
 }

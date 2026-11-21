@@ -481,7 +481,12 @@ impl ContextManagerApp {
 
     fn apply_toggle(&mut self, disable: bool) {
         let lang = self.lang();
-        let targets = self.checked_entries();
+        // 이미 원하는 상태인 항목은 건너뛰고 실제 상태가 바뀔 항목만 처리
+        let targets: Vec<&ContextEntry> = self
+            .checked_entries()
+            .into_iter()
+            .filter(|e| e.disabled != disable)
+            .collect();
         if targets.is_empty() {
             self.message = Some(StatusMessage::Warn(lang.msg_select_first().into()));
             return;
@@ -511,10 +516,16 @@ impl ContextManagerApp {
         if include_related {
             let related = find_related_unchecked_indices(&self.entries, &self.checked_ids);
             for idx in related {
-                self.checked_ids.insert(self.entries[idx].id.clone());
+                if self.entries[idx].can_delete() {
+                    self.checked_ids.insert(self.entries[idx].id.clone());
+                }
             }
         }
-        let targets = self.checked_entries();
+        let targets: Vec<&ContextEntry> = self
+            .checked_entries()
+            .into_iter()
+            .filter(|e| e.can_delete())
+            .collect();
         if targets.is_empty() {
             return;
         }
@@ -795,7 +806,13 @@ impl ContextManagerApp {
 
     fn bottom_bar(&mut self, ui: &mut egui::Ui) {
         let lang = self.lang();
-        let selected_count = self.checked_ids.len();
+        let checked = self.checked_entries();
+        let selected_count = checked.len();
+        let can_disable_any = checked.iter().any(|e| !e.disabled);
+        let can_enable_any = checked.iter().any(|e| e.disabled);
+        let deletable_count = checked.iter().filter(|e| e.can_delete()).count();
+        let only_hide_only = selected_count > 0 && deletable_count == 0;
+
         let mut do_disable = false;
         let mut do_enable = false;
         let mut do_delete = false;
@@ -809,7 +826,7 @@ impl ContextManagerApp {
                 ui.separator();
                 if ui
                     .add_enabled(
-                        selected_count > 0 && !self.scanning,
+                        can_disable_any && !self.scanning,
                         egui::Button::new(lang.btn_disable()),
                     )
                     .on_hover_text(lang.btn_disable_tip())
@@ -819,24 +836,32 @@ impl ContextManagerApp {
                 }
                 if ui
                     .add_enabled(
-                        selected_count > 0 && !self.scanning,
+                        can_enable_any && !self.scanning,
                         egui::Button::new(lang.btn_enable()),
                     )
                     .clicked()
                 {
                     do_enable = true;
                 }
-                let del_text = egui::RichText::new(lang.btn_remove()).color(if selected_count > 0 {
+                let del_enabled = deletable_count > 0 && !self.scanning;
+                let del_text = egui::RichText::new(lang.btn_remove()).color(if del_enabled {
                     ui.visuals().error_fg_color
                 } else {
                     ui.visuals().weak_text_color()
                 });
-                if ui
-                    .add_enabled(selected_count > 0 && !self.scanning, egui::Button::new(del_text))
+                let del_btn = ui
+                    .add_enabled(del_enabled, egui::Button::new(del_text))
                     .on_hover_text(lang.btn_remove_tip())
-                    .clicked()
-                {
+                    .on_disabled_hover_text(if only_hide_only {
+                        lang.btn_remove_disabled_hide_only_tip()
+                    } else {
+                        lang.btn_remove_tip()
+                    });
+                if del_btn.clicked() {
                     do_delete = true;
+                }
+                if only_hide_only {
+                    ui.colored_label(ui.visuals().warn_fg_color, lang.hide_only_hint_inline());
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1226,6 +1251,14 @@ impl ContextManagerApp {
                                 }
                             });
 
+                        if !first.can_delete() {
+                            ui.add_space(4.0);
+                            ui.colored_label(
+                                ui.visuals().warn_fg_color,
+                                lang.detail_hide_only_notice(),
+                            );
+                        }
+
                         if let Some(ref clsid) = first.clsid {
                             let peers = find_shared_clsid_peers(&self.entries, clsid, &first.group_key);
                             if !peers.is_empty() {
@@ -1378,7 +1411,10 @@ impl ContextManagerApp {
             return;
         }
         let lang = self.lang();
-        let related_indices = find_related_unchecked_indices(&self.entries, &self.checked_ids);
+        let related_indices: Vec<usize> = find_related_unchecked_indices(&self.entries, &self.checked_ids)
+            .into_iter()
+            .filter(|&idx| self.entries[idx].can_delete())
+            .collect();
         let related_count = related_indices.len();
         if related_count == 0 {
             self.include_related_on_delete = false;
@@ -1394,35 +1430,23 @@ impl ContextManagerApp {
             String::new()
         };
 
-        let mut effective_targets = self.checked_entries();
+        let all_checked = self.checked_entries();
+        let skipped_win11_count = all_checked.iter().filter(|e| !e.can_delete()).count();
+        let mut effective_targets: Vec<&ContextEntry> =
+            all_checked.into_iter().filter(|e| e.can_delete()).collect();
+        let base_deletable_count = effective_targets.len();
         if self.include_related_on_delete {
             for &idx in &related_indices {
                 effective_targets.push(&self.entries[idx]);
             }
         }
 
-        let base_count = self.checked_ids.len();
         let total = effective_targets.len();
         let admin_needed = effective_targets.iter().filter(|e| e.requires_admin_to_delete()).count();
         let win11_orphan_count = effective_targets
             .iter()
             .filter(|e| e.kind == EntryKind::Win11Packaged && e.is_orphaned())
             .count();
-        let win11_active_count = effective_targets
-            .iter()
-            .filter(|e| e.kind == EntryKind::Win11Packaged && !e.is_orphaned())
-            .count();
-        let mut shared_peers: BTreeSet<String> = BTreeSet::new();
-        for e in &effective_targets {
-            if e.kind == EntryKind::Win11Packaged && !e.is_orphaned() {
-                if let Some(ref clsid) = e.clsid {
-                    for p in find_shared_clsid_peers(&self.entries, clsid, &e.group_key) {
-                        shared_peers.insert(p);
-                    }
-                }
-            }
-        }
-        let shared_peers_text = shared_peers.into_iter().collect::<Vec<_>>().join(", ");
         let preview_names: Vec<String> = effective_targets
             .iter()
             .take(10)
@@ -1455,7 +1479,7 @@ impl ContextManagerApp {
                         ui.add_space(4.0);
                         ui.checkbox(
                             &mut include_related,
-                            lang.fmt_modal_include_related(related_count, base_count + related_count),
+                            lang.fmt_modal_include_related(related_count, base_deletable_count + related_count),
                         );
                     });
             }
@@ -1468,19 +1492,11 @@ impl ContextManagerApp {
                 );
             }
 
-            if win11_active_count > 0 {
+            if skipped_win11_count > 0 {
                 ui.add_space(4.0);
                 ui.colored_label(
                     ui.visuals().warn_fg_color,
-                    lang.fmt_modal_win11_note(win11_active_count),
-                );
-            }
-
-            if !shared_peers_text.is_empty() {
-                ui.add_space(4.0);
-                ui.colored_label(
-                    ui.visuals().warn_fg_color,
-                    lang.fmt_shared_clsid_warn(&shared_peers_text),
+                    lang.fmt_modal_win11_skipped(skipped_win11_count),
                 );
             }
 
