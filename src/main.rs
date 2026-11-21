@@ -7,6 +7,7 @@ mod dialog;
 mod i18n;
 mod model;
 mod path_util;
+mod probe;
 mod reg;
 mod scanner;
 mod system;
@@ -40,6 +41,11 @@ fn parse_launch_options() -> LaunchOptions {
 }
 
 fn main() {
+    if std::env::args().any(|a| a == probe::PROBE_WORKER_ARG) {
+        probe::run_probe_worker_main();
+        return;
+    }
+
     let opts = parse_launch_options();
 
     // 스크린샷 자동 촬영(--ready-file) 모드가 아닌 일반 실행에서는 시작 시 관리자 권한 확보

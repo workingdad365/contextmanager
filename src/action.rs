@@ -456,6 +456,7 @@ mod tests {
             target_exists: None,
             clsid: None,
             clsid_description: None,
+            menu_labels: Vec::new(),
             package_name: None,
             icon: None,
             disabled: false,

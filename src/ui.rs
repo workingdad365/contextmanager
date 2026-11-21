@@ -18,6 +18,7 @@ use crate::model::{
     Category, ContextEntry, EntryGroup, EntryKind, FilterOptions, build_groups, count_group_totals,
     find_related_unchecked_indices, find_shared_clsid_peers, matches_filter,
 };
+use crate::probe;
 use crate::reg::RegRoot;
 use crate::scanner::{self, ScanResult};
 use crate::system;
@@ -181,6 +182,9 @@ struct ContextManagerApp {
     scanning: bool,
     scan_rx: Option<Receiver<ScanResult>>,
     last_scan_ms: Option<u128>,
+    scan_generation: u64,
+    probing: bool,
+    probe_rx: Option<Receiver<(u64, HashMap<String, Vec<String>>)>>,
 
     filter: FilterOptions,
     view_mode: ViewMode,
@@ -236,6 +240,9 @@ impl ContextManagerApp {
             scanning: false,
             scan_rx: None,
             last_scan_ms: None,
+            scan_generation: 0,
+            probing: false,
+            probe_rx: None,
             filter: FilterOptions::default(),
             view_mode: ViewMode::Grouped,
             checked_ids: HashSet::new(),
@@ -307,24 +314,63 @@ impl ContextManagerApp {
             self.last_scan_ms = Some(result.elapsed_ms);
             self.scanning = false;
             self.scan_rx = None;
+            self.scan_generation = self.scan_generation.wrapping_add(1);
 
             let valid_ids: HashSet<&str> = self.entries.iter().map(|e| e.id.as_str()).collect();
             self.checked_ids.retain(|id| valid_ids.contains(id.as_str()));
 
-            // 스크린샷 모드에서는 대표 그룹(여러 위치 포함 항목 우선)을 자동 선택해 상세 패널까지 채워지도록 준비
-            if self.ready_file.is_some() && self.ready_countdown.is_none() {
-                let filtered = self.filtered_indices();
-                let groups = build_groups(&self.entries, &filtered, self.lang());
-                let picked = groups
-                    .iter()
-                    .find(|g| g.entry_indices.len() >= 2 && !g.display_name.starts_with('"'))
-                    .or_else(|| groups.first());
-                if let Some(first) = picked {
-                    self.focused = Some(FocusedTarget::Group(first.key.clone()));
-                }
-                self.ready_countdown = Some(5);
-                self.ctx.request_repaint();
+            self.start_probe();
+            if !self.probing {
+                self.prepare_ready_countdown();
             }
+        }
+    }
+
+    fn start_probe(&mut self) {
+        let requests = probe::build_probe_requests(&self.entries);
+        if requests.is_empty() {
+            self.probing = false;
+            self.probe_rx = None;
+            return;
+        }
+        self.probing = true;
+        let scan_gen = self.scan_generation;
+        let (tx, rx) = mpsc::channel();
+        self.probe_rx = Some(rx);
+        let ctx = self.ctx.clone();
+        std::thread::spawn(move || {
+            let map = probe::run_probe_isolated(&requests);
+            let _ = tx.send((scan_gen, map));
+            ctx.request_repaint();
+        });
+    }
+
+    fn poll_probe(&mut self) {
+        let Some(rx) = &self.probe_rx else { return };
+        if let Ok((scan_gen, map)) = rx.try_recv() {
+            self.probing = false;
+            self.probe_rx = None;
+            if scan_gen == self.scan_generation {
+                probe::apply_probe_results(&mut self.entries, &map);
+            }
+            self.prepare_ready_countdown();
+        }
+    }
+
+    fn prepare_ready_countdown(&mut self) {
+        // 스크린샷 모드에서는 대표 그룹(여러 위치 포함 항목 우선)을 자동 선택해 상세 패널까지 채워지도록 준비
+        if self.ready_file.is_some() && self.ready_countdown.is_none() {
+            let filtered = self.filtered_indices();
+            let groups = build_groups(&self.entries, &filtered, self.lang());
+            let picked = groups
+                .iter()
+                .find(|g| g.entry_indices.len() >= 2 && !g.display_name.starts_with('"'))
+                .or_else(|| groups.first());
+            if let Some(first) = picked {
+                self.focused = Some(FocusedTarget::Group(first.key.clone()));
+            }
+            self.ready_countdown = Some(5);
+            self.ctx.request_repaint();
         }
     }
 
@@ -727,6 +773,9 @@ impl ContextManagerApp {
                     if self.scanning {
                         ui.spinner();
                         ui.weak(lang.scanning_label());
+                    } else if self.probing {
+                        ui.spinner();
+                        ui.weak(lang.probing_label());
                     }
                 });
             });
@@ -1054,7 +1103,11 @@ impl ContextManagerApp {
                             if ui.add(egui::Button::selectable(is_focused, title)).clicked() {
                                 self.focused = Some(FocusedTarget::Group(group.key.clone()));
                             }
-                            if let Some(ref desc) = group.clsid_description {
+                            if let Some(menu_summary) =
+                                format_menu_labels_inline(&group.menu_labels, &group.display_name)
+                            {
+                                ui.label(format!("\"{menu_summary}\""));
+                            } else if let Some(ref desc) = group.clsid_description {
                                 if !desc.eq_ignore_ascii_case(&group.display_name) {
                                     ui.weak(format!("({desc})"));
                                 }
@@ -1144,7 +1197,11 @@ impl ContextManagerApp {
                             if ui.add(egui::Button::selectable(is_focused, title)).clicked() {
                                 self.focused = Some(FocusedTarget::Entry(entry.id.clone()));
                             }
-                            if let Some(ref desc) = entry.clsid_description {
+                            if let Some(menu_summary) =
+                                format_menu_labels_inline(&entry.menu_labels, &entry.display_name)
+                            {
+                                ui.label(format!("\"{menu_summary}\""));
+                            } else if let Some(ref desc) = entry.clsid_description {
                                 if !desc.eq_ignore_ascii_case(&entry.display_name) {
                                     ui.weak(format!("({desc})"));
                                 }
@@ -1209,6 +1266,15 @@ impl ContextManagerApp {
                 }
 
                 let first = self.entries[target_indices[0]].clone();
+                let mut combined_menu_labels: Vec<String> = Vec::new();
+                let mut seen_menu_labels: HashSet<String> = HashSet::new();
+                for &i in &target_indices {
+                    for lbl in &self.entries[i].menu_labels {
+                        if seen_menu_labels.insert(lbl.to_ascii_lowercase()) {
+                            combined_menu_labels.push(lbl.clone());
+                        }
+                    }
+                }
 
                 egui::ScrollArea::vertical()
                     .id_salt("detail_scroll")
@@ -1257,6 +1323,11 @@ impl ContextManagerApp {
                                 if let Some(ref desc) = first.clsid_description {
                                     ui.weak(lang.meta_clsid_desc());
                                     ui.label(desc);
+                                    ui.end_row();
+                                }
+                                if !combined_menu_labels.is_empty() {
+                                    ui.weak(lang.meta_menu_labels());
+                                    ui.label(combined_menu_labels.join("\n"));
                                     ui.end_row();
                                 }
                                 if let Some(ref pkg) = first.package_name {
@@ -1374,6 +1445,9 @@ impl ContextManagerApp {
                                             );
                                         }
                                     });
+                                    if !e.menu_labels.is_empty() {
+                                        ui.weak(format!("\"{}\"", e.menu_labels.join(", ")));
+                                    }
                                     ui.monospace(&loc_display);
                                     ui.horizontal(|ui| {
                                         if ui.small_button(lang.btn_copy_path()).clicked() {
@@ -1994,6 +2068,7 @@ impl eframe::App for ContextManagerApp {
         }
 
         self.poll_scan();
+        self.poll_probe();
         self.poll_update();
 
         self.update_banner(ui);
@@ -2072,6 +2147,22 @@ fn prepend_prefix(buf: &mut String, prefix: &str) {
     let trimmed = buf.trim_start();
     if !trimmed.to_ascii_lowercase().starts_with(&prefix.to_ascii_lowercase()) {
         *buf = format!("{prefix}{trimmed}");
+    }
+}
+
+fn format_menu_labels_inline(labels: &[String], display_name: &str) -> Option<String> {
+    let filtered: Vec<&str> = labels
+        .iter()
+        .map(String::as_str)
+        .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case(display_name))
+        .collect();
+    if filtered.is_empty() {
+        return None;
+    }
+    if filtered.len() <= 2 {
+        Some(filtered.join(", "))
+    } else {
+        Some(format!("{}, {} (+{})", filtered[0], filtered[1], filtered.len() - 2))
     }
 }
 

@@ -173,6 +173,7 @@ pub struct ContextEntry {
     pub target_exists: Option<bool>,
     pub clsid: Option<String>,
     pub clsid_description: Option<String>,
+    pub menu_labels: Vec<String>,
     pub package_name: Option<String>,
     pub icon: Option<String>,
     pub disabled: bool,
@@ -261,6 +262,7 @@ pub struct EntryGroup {
     pub display_name: String,
     pub kind: EntryKind,
     pub clsid_description: Option<String>,
+    pub menu_labels: Vec<String>,
     pub resolved_target: Option<String>,
     pub entry_indices: Vec<usize>,
     pub any_orphaned: bool,
@@ -347,6 +349,10 @@ pub fn matches_filter(entry: &ContextEntry, filter: &FilterOptions, lang: Langua
                 .as_deref()
                 .is_some_and(|s| s.to_ascii_lowercase().contains(&q))
             || entry
+                .menu_labels
+                .iter()
+                .any(|s| s.to_ascii_lowercase().contains(&q))
+            || entry
                 .package_name
                 .as_deref()
                 .is_some_and(|s| s.to_ascii_lowercase().contains(&q));
@@ -391,11 +397,22 @@ pub fn build_groups(entries: &[ContextEntry], filtered_indices: &[usize], lang: 
                 .iter()
                 .find_map(|&i| entries[i].clsid_description.clone());
 
+            let mut menu_labels = Vec::new();
+            let mut seen_labels = HashSet::new();
+            for &i in &indices {
+                for lbl in &entries[i].menu_labels {
+                    if seen_labels.insert(lbl.to_ascii_lowercase()) {
+                        menu_labels.push(lbl.clone());
+                    }
+                }
+            }
+
             EntryGroup {
                 key,
                 display_name: first.display_name.clone(),
                 kind: first.kind,
                 clsid_description,
+                menu_labels,
                 resolved_target: first.resolved_target.clone(),
                 entry_indices: indices,
                 any_orphaned,
@@ -507,6 +524,7 @@ mod tests {
             target_exists: Some(exists),
             clsid: None,
             clsid_description: None,
+            menu_labels: Vec::new(),
             package_name: None,
             icon: None,
             disabled: false,
@@ -613,6 +631,13 @@ mod tests {
         entry.kind = EntryKind::ShellEx;
         entry.clsid = Some("{A6595CD1-BF77-430A-A452-18696685F7C7}".into());
         entry.clsid_description = Some("Acrobat Elements Context Menu".into());
+        entry.menu_labels = vec!["Acrobat에서 파일 결합...".into()];
+
+        let f_menu = FilterOptions {
+            search: "파일 결합".into(),
+            ..Default::default()
+        };
+        assert!(matches_filter(&entry, &f_menu, Language::Ko));
 
         let f_desc = FilterOptions {
             search: "elements context".into(),
@@ -632,5 +657,6 @@ mod tests {
             groups[0].clsid_description.as_deref(),
             Some("Acrobat Elements Context Menu")
         );
+        assert_eq!(groups[0].menu_labels, vec!["Acrobat에서 파일 결합..."]);
     }
 }

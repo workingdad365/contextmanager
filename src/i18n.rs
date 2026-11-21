@@ -156,10 +156,10 @@ impl Language {
     }
     pub fn search_hint(self) -> &'static str {
         self.pick(
-            "Name, path, extension, CLSID...",
-            "이름, 실행 경로, 확장자, CLSID...",
-            "名称、路径、扩展名、CLSID...",
-            "名前、パス、拡張子、CLSID...",
+            "Name, menu text, path, ext, CLSID...",
+            "이름, 표시 메뉴, 실행 경로, 확장자, CLSID...",
+            "名称、菜单文本、路径、扩展名、CLSID...",
+            "名前、表示メニュー、パス、拡張子、CLSID...",
         )
     }
     pub fn btn_clear(self) -> &'static str {
@@ -218,6 +218,14 @@ impl Language {
     }
     pub fn scanning_label(self) -> &'static str {
         self.pick("Scanning...", "스캔 중...", "扫描中...", "スキャン中...")
+    }
+    pub fn probing_label(self) -> &'static str {
+        self.pick(
+            "Loading menu labels...",
+            "메뉴 문구 조회 중...",
+            "正在读取菜单文本...",
+            "メニュー名を取得中...",
+        )
     }
 
     // --- Update banner ---
@@ -430,6 +438,9 @@ impl Language {
     }
     pub fn meta_clsid_desc(self) -> &'static str {
         self.pick("CLSID Description", "CLSID 설명", "CLSID 说明", "CLSID 説明")
+    }
+    pub fn meta_menu_labels(self) -> &'static str {
+        self.pick("Explorer Menu", "탐색기 표시 메뉴", "资源管理器菜单", "エクスプローラー表示")
     }
     pub fn file_exists_ok(self) -> &'static str {
         self.pick("File exists", "실제 파일 존재함", "文件存在", "ファイルが存在します")
