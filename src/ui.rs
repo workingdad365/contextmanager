@@ -22,7 +22,7 @@ const ICON_PNG: &[u8] = include_bytes!("../assets/contextmanager.png");
 
 pub fn run() {
     let mut viewport = egui::ViewportBuilder::default()
-        .with_title(format!("{APP_NAME} {APP_VERSION}"))
+        .with_title(format!("{APP_NAME} v{APP_VERSION}"))
         .with_inner_size([1160.0, 720.0])
         .with_min_inner_size([860.0, 520.0]);
     if let Ok(icon) = eframe::icon_data::from_png_bytes(ICON_PNG) {
@@ -382,6 +382,7 @@ impl ContextManagerApp {
                     ui.add_space(12.0);
                     ui.separator();
                     ui.add_space(6.0);
+                    ui.weak(format!("{APP_NAME} v{APP_VERSION}"));
                     ui.weak(&self.os_label);
                     if let Some(ms) = self.last_scan_ms {
                         ui.weak(format!("전체 {}건 스캔 ({ms}ms)", self.entries.len()));
