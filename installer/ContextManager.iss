@@ -66,12 +66,19 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopico
 [Run]
 ; requireAdministrator 매니페스트가 내장되어 있으므로 shellexec 로 UAC 프롬프트를 통해 실행
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchAfterInstall}"; Flags: nowait postinstall skipifsilent shellexec
+; 앱 내 업데이트(/SILENT /RELAUNCH=1)로 설치한 경우 앱을 바로 다시 실행
+Filename: "{app}\{#AppExe}"; Flags: nowait shellexec; Check: IsRelaunchRequested
 
 [UninstallRun]
 ; 제거 전 실행 중인 앱 종료
 Filename: "{sys}\taskkill.exe"; Parameters: "/IM {#AppExe} /F"; Flags: runhidden; RunOnceId: "KillApp"
 
 [Code]
+function IsRelaunchRequested: Boolean;
+begin
+  Result := ExpandConstant('{param:RELAUNCH|0}') = '1';
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   ResultCode: Integer;

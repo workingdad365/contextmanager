@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
+use crate::i18n::Language;
 use crate::path_util::normalize_path_key;
 use crate::reg::RegRoot;
 
@@ -13,10 +14,10 @@ pub enum Scope {
 }
 
 impl Scope {
-    pub fn label(self) -> &'static str {
+    pub fn label(self, lang: Language) -> &'static str {
         match self {
-            Scope::User => "사용자 (HKCU)",
-            Scope::System => "시스템 (HKLM)",
+            Scope::User => lang.scope_user(),
+            Scope::System => lang.scope_system(),
         }
     }
 
@@ -44,13 +45,23 @@ pub enum EntryKind {
 }
 
 impl EntryKind {
-    pub fn label(self) -> &'static str {
+    pub fn label(self, lang: Language) -> &'static str {
         match self {
-            EntryKind::ShellVerb => "Shell 명령",
-            EntryKind::ShellEx => "COM 셸 확장",
-            EntryKind::Win11Packaged => "Win11 신형",
-            EntryKind::SendTo => "보내기",
-            EntryKind::ShellNew => "새로 만들기",
+            EntryKind::ShellVerb => lang.kind_shell_verb(),
+            EntryKind::ShellEx => lang.kind_shellex(),
+            EntryKind::Win11Packaged => lang.kind_win11(),
+            EntryKind::SendTo => lang.kind_sendto(),
+            EntryKind::ShellNew => lang.kind_shellnew(),
+        }
+    }
+
+    pub fn code(self) -> &'static str {
+        match self {
+            EntryKind::ShellVerb => "shell",
+            EntryKind::ShellEx => "shellex",
+            EntryKind::Win11Packaged => "win11",
+            EntryKind::SendTo => "sendto",
+            EntryKind::ShellNew => "shellnew",
         }
     }
 }
@@ -82,17 +93,55 @@ impl Category {
         Category::ShellNew,
     ];
 
-    pub fn label(self) -> &'static str {
+    pub fn label(self, lang: Language) -> &'static str {
         match self {
-            Category::All => "전체",
-            Category::Directory => "폴더",
-            Category::Background => "폴더 배경 / 바탕화면",
-            Category::AllFiles => "모든 파일",
-            Category::Drive => "드라이브",
-            Category::FileExtension => "확장자별",
-            Category::Win11Modern => "Win11 신형 메뉴",
-            Category::SendTo => "보내기 (SendTo)",
-            Category::ShellNew => "새로 만들기 (ShellNew)",
+            Category::All => lang.cat_all(),
+            Category::Directory => lang.cat_directory(),
+            Category::Background => lang.cat_background(),
+            Category::AllFiles => lang.cat_all_files(),
+            Category::Drive => lang.cat_drive(),
+            Category::FileExtension => lang.cat_file_ext(),
+            Category::Win11Modern => lang.cat_win11(),
+            Category::SendTo => lang.cat_sendto(),
+            Category::ShellNew => lang.cat_shellnew(),
+        }
+    }
+}
+
+/// 다국어 동적 표시를 위한 적용 대상 라벨
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TargetLabel {
+    AllFiles,
+    AllFilesystemObjects,
+    Directory,
+    DirectoryBackground,
+    FolderVirtual,
+    Drive,
+    DesktopBackground,
+    LibraryFolder,
+    LibraryBackground,
+    FileAssociation(String),
+    SendTo,
+    ShellNew(String),
+    Custom(String),
+}
+
+impl TargetLabel {
+    pub fn display(&self, lang: Language) -> String {
+        match self {
+            TargetLabel::AllFiles => lang.tgt_all_files().to_string(),
+            TargetLabel::AllFilesystemObjects => lang.tgt_all_fs().to_string(),
+            TargetLabel::Directory => lang.tgt_directory().to_string(),
+            TargetLabel::DirectoryBackground => lang.tgt_dir_bg().to_string(),
+            TargetLabel::FolderVirtual => lang.tgt_folder_virtual().to_string(),
+            TargetLabel::Drive => lang.tgt_drive().to_string(),
+            TargetLabel::DesktopBackground => lang.tgt_desktop_bg().to_string(),
+            TargetLabel::LibraryFolder => lang.tgt_lib_folder().to_string(),
+            TargetLabel::LibraryBackground => lang.tgt_lib_bg().to_string(),
+            TargetLabel::FileAssociation(name) => lang.fmt_tgt_file_assoc(name),
+            TargetLabel::SendTo => lang.tgt_sendto().to_string(),
+            TargetLabel::ShellNew(ext) => lang.fmt_tgt_shellnew(ext),
+            TargetLabel::Custom(s) => s.clone(),
         }
     }
 }
@@ -106,12 +155,10 @@ pub struct ContextEntry {
     pub kind: EntryKind,
     pub scope: Scope,
     pub category: Category,
-    pub target_label: String,
+    pub target_label: TargetLabel,
     pub registry_root: Option<RegRoot>,
     pub registry_subkey: Option<String>,
-    /// SendTo 실제 파일 경로 (비활성화 시 보관 경로가 아니라 원본 파일명 포함)
     pub file_path: Option<String>,
-    /// SendTo 비활성화 시 보관 폴더 내 현재 파일 경로
     pub disabled_file_path: Option<String>,
     pub command: Option<String>,
     pub resolved_target: Option<String>,
@@ -125,12 +172,14 @@ pub struct ContextEntry {
 }
 
 impl ContextEntry {
-    /// 실행 파일 또는 DLL 이 디스크에 존재하지 않는 잔여 항목 여부
     pub fn is_orphaned(&self) -> bool {
         self.target_exists == Some(false)
     }
 
-    /// 사람이 읽을 수 있는 전체 위치 문자열 (레지스트리 경로 또는 파일 경로)
+    pub fn target_text(&self, lang: Language) -> String {
+        self.target_label.display(lang)
+    }
+
     pub fn location_display(&self) -> String {
         if let (Some(root), Some(subkey)) = (self.registry_root, &self.registry_subkey) {
             return root.format_short_path(subkey);
@@ -144,27 +193,15 @@ impl ContextEntry {
         self.id.clone()
     }
 
-    /// HKLM 키를 직접 수정/삭제해야 해서 관리자 권한이 필요한지 여부
     pub fn requires_admin_to_delete(&self) -> bool {
         match self.kind {
-            EntryKind::Win11Packaged => false, // HKCU Blocked 등록으로 처리
-            EntryKind::SendTo => false,
+            EntryKind::Win11Packaged | EntryKind::SendTo => false,
             EntryKind::ShellVerb | EntryKind::ShellEx | EntryKind::ShellNew => {
                 self.registry_root == Some(RegRoot::Hklm)
             }
         }
     }
 
-    /// 비활성화/활성화에 관리자 권한이 필요한지 여부
-    pub fn requires_admin_to_toggle(&self) -> bool {
-        match self.kind {
-            // ShellEx 와 Win11Packaged 는 HKCU Blocked 키를 사용하므로 일반 권한으로 가능
-            EntryKind::ShellEx | EntryKind::Win11Packaged | EntryKind::SendTo => false,
-            EntryKind::ShellVerb | EntryKind::ShellNew => self.registry_root == Some(RegRoot::Hklm),
-        }
-    }
-
-    /// 그룹화 기준 키 계산
     pub fn compute_group_key(
         kind: EntryKind,
         display_name: &str,
@@ -187,7 +224,6 @@ impl ContextEntry {
         if let Some(target) = resolved_target {
             let norm = normalize_path_key(target);
             if !norm.is_empty() {
-                // 같은 실행 파일 + 같은 표시 이름이면 하나로 묶음 (예: Open with Cursor 의 15개 경로)
                 return format!("exe:{}:{}", norm, display_name.to_ascii_lowercase());
             }
         }
@@ -196,7 +232,7 @@ impl ContextEntry {
                 return format!("clsid:{}", c.to_ascii_lowercase());
             }
         }
-        format!("name:{}:{}", kind.label(), display_name.to_ascii_lowercase())
+        format!("name:{}:{}", kind.code(), display_name.to_ascii_lowercase())
     }
 }
 
@@ -252,7 +288,7 @@ impl Default for FilterOptions {
 }
 
 /// 개별 항목이 필터 조건에 맞는지 검사
-pub fn matches_filter(entry: &ContextEntry, filter: &FilterOptions) -> bool {
+pub fn matches_filter(entry: &ContextEntry, filter: &FilterOptions, lang: Language) -> bool {
     if filter.category != Category::All && entry.category != filter.category {
         return false;
     }
@@ -267,9 +303,10 @@ pub fn matches_filter(entry: &ContextEntry, filter: &FilterOptions) -> bool {
     }
     let q = filter.search.trim().to_ascii_lowercase();
     if !q.is_empty() {
+        let tgt = entry.target_text(lang).to_ascii_lowercase();
         let hit = entry.display_name.to_ascii_lowercase().contains(&q)
             || entry.raw_name.to_ascii_lowercase().contains(&q)
-            || entry.target_label.to_ascii_lowercase().contains(&q)
+            || tgt.contains(&q)
             || entry
                 .resolved_target
                 .as_deref()
@@ -294,8 +331,7 @@ pub fn matches_filter(entry: &ContextEntry, filter: &FilterOptions) -> bool {
 }
 
 /// 필터를 통과한 항목 인덱스들을 group_key 기준으로 묶고 정렬
-/// 잔여 항목(파일 없음)이 있는 그룹을 최상단에 배치한 뒤 이름순 정렬
-pub fn build_groups(entries: &[ContextEntry], filtered_indices: &[usize]) -> Vec<EntryGroup> {
+pub fn build_groups(entries: &[ContextEntry], filtered_indices: &[usize], lang: Language) -> Vec<EntryGroup> {
     let mut map: HashMap<String, Vec<usize>> = HashMap::new();
     for &idx in filtered_indices {
         map.entry(entries[idx].group_key.clone()).or_default().push(idx);
@@ -313,15 +349,15 @@ pub fn build_groups(entries: &[ContextEntry], filtered_indices: &[usize]) -> Vec
             let has_system_scope = indices.iter().any(|&i| entries[i].scope == Scope::System);
             let is_system = indices.iter().all(|&i| entries[i].is_system);
 
-            let mut target_set: BTreeSet<&str> = BTreeSet::new();
+            let mut target_set: BTreeSet<String> = BTreeSet::new();
             for &i in &indices {
-                target_set.insert(entries[i].target_label.as_str());
+                target_set.insert(entries[i].target_text(lang));
             }
-            let targets: Vec<&str> = target_set.into_iter().collect();
+            let targets: Vec<String> = target_set.into_iter().collect();
             let summary_targets = if targets.len() <= 2 {
                 targets.join(", ")
             } else {
-                format!("{}, {} 외 {}곳", targets[0], targets[1], targets.len() - 2)
+                lang.fmt_summary_more(&targets[0], &targets[1], targets.len() - 2)
             };
 
             EntryGroup {
@@ -384,7 +420,14 @@ pub fn count_group_totals(entries: &[ContextEntry]) -> HashMap<String, usize> {
 mod tests {
     use super::*;
 
-    fn sample_entry(id: &str, name: &str, target: &str, exe: &str, exists: bool, category: Category) -> ContextEntry {
+    fn sample_entry(
+        id: &str,
+        name: &str,
+        target: TargetLabel,
+        exe: &str,
+        exists: bool,
+        category: Category,
+    ) -> ContextEntry {
         let group_key = ContextEntry::compute_group_key(
             EntryKind::ShellVerb,
             name,
@@ -400,7 +443,7 @@ mod tests {
             kind: EntryKind::ShellVerb,
             scope: Scope::User,
             category,
-            target_label: target.into(),
+            target_label: target,
             registry_root: Some(RegRoot::Hkcu),
             registry_subkey: Some(id.into()),
             file_path: None,
@@ -420,45 +463,44 @@ mod tests {
     #[test]
     fn groups_same_app_across_multiple_locations_and_sorts_orphans_first() {
         let entries = vec![
-            sample_entry("k1", "VS Code로 열기", "폴더", "C:\\Apps\\Code.exe", true, Category::Directory),
-            sample_entry("k2", "Open with Cursor", "폴더", "C:\\Apps\\Cursor.exe", false, Category::Directory),
-            sample_entry("k3", "Open with Cursor", "폴더 배경", "C:\\Apps\\Cursor.exe", false, Category::Background),
-            sample_entry("k4", "Open with Cursor", ".py", "C:\\Apps\\Cursor.exe", false, Category::FileExtension),
+            sample_entry("k1", "Open with VS Code", TargetLabel::Directory, "C:\\Apps\\Code.exe", true, Category::Directory),
+            sample_entry("k2", "Open with Cursor", TargetLabel::Directory, "C:\\Apps\\Cursor.exe", false, Category::Directory),
+            sample_entry("k3", "Open with Cursor", TargetLabel::DirectoryBackground, "C:\\Apps\\Cursor.exe", false, Category::Background),
+            sample_entry("k4", "Open with Cursor", TargetLabel::Custom(".py".into()), "C:\\Apps\\Cursor.exe", false, Category::FileExtension),
         ];
 
         let all_idx: Vec<usize> = (0..entries.len()).collect();
-        let groups = build_groups(&entries, &all_idx);
+        let groups = build_groups(&entries, &all_idx, Language::En);
         assert_eq!(groups.len(), 2);
-        // 잔여 항목(Cursor)이 맨 위에 와야 함
         assert_eq!(groups[0].display_name, "Open with Cursor");
         assert_eq!(groups[0].entry_indices.len(), 3);
         assert!(groups[0].all_orphaned);
-        assert!(groups[0].summary_targets.contains("외 1곳"));
-        assert_eq!(groups[1].display_name, "VS Code로 열기");
+        assert!(groups[0].summary_targets.contains("+1 more"));
+        assert_eq!(groups[1].display_name, "Open with VS Code");
     }
 
     #[test]
     fn filter_supports_orphan_and_search() {
         let entries = vec![
-            sample_entry("k1", "Open with Cursor", ".rs", "C:\\Apps\\Cursor.exe", false, Category::FileExtension),
-            sample_entry("k2", "7-Zip", "모든 파일", "C:\\Apps\\7z.exe", true, Category::AllFiles),
+            sample_entry("k1", "Open with Cursor", TargetLabel::Custom(".rs".into()), "C:\\Apps\\Cursor.exe", false, Category::FileExtension),
+            sample_entry("k2", "7-Zip", TargetLabel::AllFiles, "C:\\Apps\\7z.exe", true, Category::AllFiles),
         ];
         let f = FilterOptions {
             only_orphaned: true,
             search: "cursor".into(),
             ..Default::default()
         };
-        assert!(matches_filter(&entries[0], &f));
-        assert!(!matches_filter(&entries[1], &f));
+        assert!(matches_filter(&entries[0], &f, Language::En));
+        assert!(!matches_filter(&entries[1], &f, Language::En));
     }
 
     #[test]
     fn finds_related_unchecked_entries_across_other_categories() {
         let entries = vec![
-            sample_entry("k1", "Open with Cursor", "폴더", "C:\\Apps\\Cursor.exe", false, Category::Directory),
-            sample_entry("k2", "Open with Cursor", "폴더 배경", "C:\\Apps\\Cursor.exe", false, Category::Background),
-            sample_entry("k3", "Open with Cursor", ".py", "C:\\Apps\\Cursor.exe", false, Category::FileExtension),
-            sample_entry("k4", "7-Zip", "모든 파일", "C:\\Apps\\7z.exe", true, Category::AllFiles),
+            sample_entry("k1", "Open with Cursor", TargetLabel::Directory, "C:\\Apps\\Cursor.exe", false, Category::Directory),
+            sample_entry("k2", "Open with Cursor", TargetLabel::DirectoryBackground, "C:\\Apps\\Cursor.exe", false, Category::Background),
+            sample_entry("k3", "Open with Cursor", TargetLabel::Custom(".py".into()), "C:\\Apps\\Cursor.exe", false, Category::FileExtension),
+            sample_entry("k4", "7-Zip", TargetLabel::AllFiles, "C:\\Apps\\7z.exe", true, Category::AllFiles),
         ];
         let mut checked = HashSet::new();
         checked.insert("k1".to_string());

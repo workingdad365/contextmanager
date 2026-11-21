@@ -56,9 +56,14 @@ foreach ($cmd in "git", "gh", "cargo") {
 
 $root = $PSScriptRoot
 $cargoPath = Join-Path $root "Cargo.toml"
-$readmePath = Join-Path $root "README.md"
+$readmePaths = @(
+    (Join-Path $root "README.md"),
+    (Join-Path $root "README.ko.md"),
+    (Join-Path $root "README.zh.md"),
+    (Join-Path $root "README.ja.md")
+)
 $issPath = Join-Path $root "installer\ContextManager.iss"
-$versionFiles = @("Cargo.toml", "Cargo.lock", "README.md", "installer/ContextManager.iss")
+$versionFiles = @("Cargo.toml", "Cargo.lock", "README.md", "README.ko.md", "README.zh.md", "README.ja.md", "installer/ContextManager.iss")
 
 $cargoToml = [System.IO.File]::ReadAllText($cargoPath)
 if ($cargoToml -notmatch '(?ms)^\[package\].*?^version\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"') {
@@ -98,7 +103,11 @@ try {
     if (-not $NoBump) {
         $bumped = $true
         Update-File $cargoPath '(?ms)(^\[package\].*?^version\s*=\s*")[0-9]+\.[0-9]+\.[0-9]+(")' "`${1}$version`${2}"
-        Update-File $readmePath '(<br>v)[0-9]+\.[0-9]+\.[0-9]+(</p>)' "`${1}$version`${2}"
+        foreach ($rp in $readmePaths) {
+            if (Test-Path -LiteralPath $rp) {
+                Update-File $rp '(<br>v)[0-9]+\.[0-9]+\.[0-9]+(</p>)' "`${1}$version`${2}"
+            }
+        }
         Update-File $issPath '(#define AppVersion ")[0-9]+\.[0-9]+\.[0-9]+(")' "`${1}$version`${2}"
     }
 

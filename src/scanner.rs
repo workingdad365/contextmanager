@@ -8,7 +8,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use crate::model::{Category, ContextEntry, EntryKind, Scope};
+use crate::model::{Category, ContextEntry, EntryKind, Scope, TargetLabel};
 use crate::path_util::{
     clean_mnemonic, expand_env, extract_executable_from_command, extract_path_from_icon,
     extract_server_path, is_likely_system_entry, resolve_and_check_exists, resolve_lnk_target,
@@ -18,16 +18,16 @@ use crate::reg::{RegKey, RegRoot};
 
 pub const BLOCKED_SUBKEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Shell Extensions\\Blocked";
 
-const FIXED_SHELL_TARGETS: &[(&str, Category, &str)] = &[
-    ("*", Category::AllFiles, "모든 파일 (*)"),
-    ("AllFilesystemObjects", Category::AllFiles, "모든 파일 및 폴더"),
-    ("Directory", Category::Directory, "폴더"),
-    ("Directory\\Background", Category::Background, "폴더 배경"),
-    ("Folder", Category::Directory, "폴더 (가상 포함)"),
-    ("Drive", Category::Drive, "드라이브"),
-    ("DesktopBackground", Category::Background, "바탕화면 배경"),
-    ("LibraryFolder", Category::Directory, "라이브러리 폴더"),
-    ("LibraryFolder\\Background", Category::Background, "라이브러리 배경"),
+const FIXED_SHELL_TARGETS: &[(&str, Category, fn() -> TargetLabel)] = &[
+    ("*", Category::AllFiles, || TargetLabel::AllFiles),
+    ("AllFilesystemObjects", Category::AllFiles, || TargetLabel::AllFilesystemObjects),
+    ("Directory", Category::Directory, || TargetLabel::Directory),
+    ("Directory\\Background", Category::Background, || TargetLabel::DirectoryBackground),
+    ("Folder", Category::Directory, || TargetLabel::FolderVirtual),
+    ("Drive", Category::Drive, || TargetLabel::Drive),
+    ("DesktopBackground", Category::Background, || TargetLabel::DesktopBackground),
+    ("LibraryFolder", Category::Directory, || TargetLabel::LibraryFolder),
+    ("LibraryFolder\\Background", Category::Background, || TargetLabel::LibraryBackground),
 ];
 
 const SKIP_CLASS_KEYS: &[&str] = &[
@@ -169,16 +169,17 @@ impl ScanContext {
         };
 
         // A. 고정 탐색기 대상 (폴더, 배경, 모든 파일, 드라이브 등)
-        for &(rel, category, label) in FIXED_SHELL_TARGETS {
-            self.scan_shell_under(root, scope, classes_base, rel, category, label);
-            self.scan_shellex_under(root, scope, classes_base, rel, category, label);
+        for &(rel, category, label_fn) in FIXED_SHELL_TARGETS {
+            let label = label_fn();
+            self.scan_shell_under(root, scope, classes_base, rel, category, &label);
+            self.scan_shellex_under(root, scope, classes_base, rel, category, &label);
         }
 
         // B. SystemFileAssociations\<ext 또는 종류>
         if let Some(sfa_key) = classes_key.open_subkey_read("SystemFileAssociations") {
             for name in sfa_key.enum_subkeys() {
                 let rel = format!("SystemFileAssociations\\{name}");
-                let label = format!("파일 연결 ({name})");
+                let label = TargetLabel::FileAssociation(name);
                 self.scan_shell_under(root, scope, classes_base, &rel, Category::FileExtension, &label);
                 self.scan_shellex_under(root, scope, classes_base, &rel, Category::FileExtension, &label);
             }
@@ -203,7 +204,7 @@ impl ScanContext {
                 continue;
             }
 
-            let label = if name.starts_with('.') {
+            let label_str = if name.starts_with('.') {
                 name.clone()
             } else if let Some(desc) = item_key.read_default_string().filter(|s| !s.trim().is_empty()) {
                 let clean = resolve_mui_string(&desc);
@@ -215,6 +216,7 @@ impl ScanContext {
             } else {
                 name.clone()
             };
+            let label = TargetLabel::Custom(label_str);
 
             if has_shell {
                 self.scan_shell_under(root, scope, classes_base, &name, Category::FileExtension, &label);
@@ -232,7 +234,7 @@ impl ScanContext {
         classes_base: &str,
         rel_target: &str,
         category: Category,
-        target_label: &str,
+        target_label: &TargetLabel,
     ) {
         let shell_subkey = format!("{classes_base}\\{rel_target}\\shell");
         let Some(shell_key) = RegKey::open_read(root, &shell_subkey) else {
@@ -340,7 +342,7 @@ impl ScanContext {
                 kind: EntryKind::ShellVerb,
                 scope,
                 category,
-                target_label: target_label.to_string(),
+                target_label: target_label.clone(),
                 registry_root: Some(root),
                 registry_subkey: Some(verb_subkey),
                 file_path: None,
@@ -365,7 +367,7 @@ impl ScanContext {
         classes_base: &str,
         rel_target: &str,
         category: Category,
-        target_label: &str,
+        target_label: &TargetLabel,
     ) {
         let handlers_subkey = format!("{classes_base}\\{rel_target}\\shellex\\ContextMenuHandlers");
         let Some(handlers_key) = RegKey::open_read(root, &handlers_subkey) else {
@@ -428,7 +430,7 @@ impl ScanContext {
                 kind: EntryKind::ShellEx,
                 scope,
                 category,
-                target_label: target_label.to_string(),
+                target_label: target_label.clone(),
                 registry_root: Some(root),
                 registry_subkey: Some(entry_subkey),
                 file_path: None,
@@ -502,10 +504,10 @@ impl ScanContext {
                 };
 
                 let target_label = match verb.item_type.as_str() {
-                    "*" => "모든 파일 (*)".to_string(),
-                    "Directory" => "폴더".to_string(),
-                    "Directory\\Background" => "폴더 배경".to_string(),
-                    other => other.to_string(),
+                    "*" => TargetLabel::AllFiles,
+                    "Directory" => TargetLabel::Directory,
+                    "Directory\\Background" => TargetLabel::DirectoryBackground,
+                    other => TargetLabel::Custom(other.to_string()),
                 };
 
                 let display_name = if verb.id.is_empty() || verb.id.eq_ignore_ascii_case(&pkg_display) {
@@ -640,7 +642,7 @@ impl ScanContext {
                 kind: EntryKind::SendTo,
                 scope: Scope::User,
                 category: Category::SendTo,
-                target_label: "보내기 메뉴".to_string(),
+                target_label: TargetLabel::SendTo,
                 registry_root: None,
                 registry_subkey: None,
                 file_path: Some(original_path),
@@ -813,7 +815,7 @@ impl ScanContext {
             kind: EntryKind::ShellNew,
             scope,
             category: Category::ShellNew,
-            target_label: format!("새로 만들기 ({ext})"),
+            target_label: TargetLabel::ShellNew(ext.to_string()),
             registry_root: Some(root),
             registry_subkey: Some(subkey_full.to_string()),
             file_path: None,
@@ -1012,13 +1014,14 @@ mod tests {
     fn live_scan_diagnostics() {
         let res = scan_all();
         println!("=== LIVE SCAN: {} entries in {} ms ===", res.entries.len(), res.elapsed_ms);
+        let lang = crate::i18n::Language::En;
         for &cat in Category::SIDEBAR {
             if cat == Category::All {
                 continue;
             }
             let total = res.entries.iter().filter(|e| e.category == cat).count();
             let orphan = res.entries.iter().filter(|e| e.category == cat && e.is_orphaned()).count();
-            println!("  {:24}: total={:4}, orphan={:3}", cat.label(), total, orphan);
+            println!("  {:24}: total={:4}, orphan={:3}", cat.label(lang), total, orphan);
         }
 
         let orphans: Vec<_> = res.entries.iter().filter(|e| e.is_orphaned()).collect();
@@ -1030,12 +1033,12 @@ mod tests {
             .filter(|(_, e)| e.is_orphaned())
             .map(|(i, _)| i)
             .collect();
-        let groups = crate::model::build_groups(&res.entries, &orphan_idx);
+        let groups = crate::model::build_groups(&res.entries, &orphan_idx, lang);
         for g in groups.iter().take(20) {
             println!(
                 "  [GROUP] {} | kind={} | scope={} | count={} | targets={} | exe={:?}",
                 g.display_name,
-                g.kind.label(),
+                g.kind.label(lang),
                 g.scope_label(),
                 g.entry_indices.len(),
                 g.summary_targets,
@@ -1061,9 +1064,9 @@ mod tests {
             println!(
                 "  [NON-EXT] {} | kind={} | cat={:?} | target={} | exists={:?} | loc={} | exe={:?}",
                 c.display_name,
-                c.kind.label(),
+                c.kind.label(lang),
                 c.category,
-                c.target_label,
+                c.target_text(lang),
                 c.target_exists,
                 c.location_display(),
                 c.resolved_target
@@ -1073,9 +1076,9 @@ mod tests {
             println!(
                 "  {} | kind={} | cat={:?} | target={} | exists={:?} | loc={} | exe={:?}",
                 c.display_name,
-                c.kind.label(),
+                c.kind.label(lang),
                 c.category,
-                c.target_label,
+                c.target_text(lang),
                 c.target_exists,
                 c.location_display(),
                 c.resolved_target

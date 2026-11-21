@@ -165,7 +165,7 @@ fn move_file_safe(src: &Path, dst: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Category, Scope};
+    use crate::model::{Category, Scope, TargetLabel};
 
     #[test]
     fn shell_verb_toggle_legacy_disable_works() {
@@ -184,7 +184,7 @@ mod tests {
             kind: EntryKind::ShellVerb,
             scope: Scope::User,
             category: Category::Directory,
-            target_label: "폴더".into(),
+            target_label: TargetLabel::Directory,
             registry_root: Some(RegRoot::Hkcu),
             registry_subkey: Some(subkey.clone()),
             file_path: None,

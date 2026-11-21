@@ -4,69 +4,77 @@
 
 <h1 align="center">ContextManager</h1>
 
-<p align="center">Windows 10 / 11 탐색기 컨텍스트 메뉴를 조회하고 비활성화 및 백업 후 제거하는 관리 도구<br>v1.0.0</p>
+<p align="center">Windows 10 / 11 File Explorer Context Menu Manager (Inspect, Disable, Backup & Remove)<br>v1.0.0</p>
+
+<p align="center">
+  <b>English</b> | <a href="README.ko.md">한국어</a> | <a href="README.zh.md">中文(简体)</a> | <a href="README.ja.md">日本語</a>
+</p>
+
+<p align="center">
+  <img src="assets/screenshot-en.png" width="900" alt="ContextManager (English)">
+</p>
 
 ---
 
-Windows 탐색기에서 파일, 폴더, 배경, 드라이브 등을 마우스 오른쪽 버튼으로 클릭했을 때 표시되는 컨텍스트 메뉴 항목을 한눈에 조회하고, 삭제된 프로그램의 잔여 항목을 일괄 정리하거나 안전하게 숨길 수 있다.
+ContextManager lists every right-click context menu entry in Windows 10 and Windows 11 File Explorer, highlights broken leftovers from uninstalled apps, and lets you safely hide (disable) or remove them with automatic backup and one-click restore.
 
-## 주요 기능
+## Key Features
 
-- **통합 스캔**:
-  - 정적/동적 Shell 명령 (`HKCU`/`HKLM`의 `*\shell`, `Directory\shell`, `Directory\Background\shell`, `Folder`, `Drive`, `DesktopBackground`, `SystemFileAssociations`, 확장자/ProgID 전체)
-  - 클래식 COM 셸 확장 (`shellex\ContextMenuHandlers`)
-  - Windows 11 신형 컨텍스트 메뉴 (MSIX/Sparse Package `IExplorerCommand`)
-  - 보내기 (`SendTo`)
-  - 새로 만들기 (`ShellNew`)
-- **앱별 묶어 보기 및 일괄 정리**: 실행 파일/DLL 경로와 표시 이름이 같은 여러 레지스트리 위치를 하나의 그룹으로 묶어 일괄 선택 및 제거 지원. 특정 분류에서 작업할 때도 다른 분류의 관련 항목 개수를 함께 표시하고 삭제 확인 창에서 일괄 포함 가능
-- **잔여 항목 자동 탐지**: 실행 파일이나 DLL이 디스크에서 이미 삭제된 항목을 `[파일 없음 - 잔여 항목]`으로 자동 강조
-- **임시 비활성화 (숨기기) 및 다시 켜기**:
-  - `Shell 명령`: `LegacyDisable` 값 토글
-  - `COM 셸 확장` / `Win11 신형`: `Shell Extensions\Blocked` 등록/해제
-  - `보내기`: `%LOCALAPPDATA%\ContextManager\disabled_sendto`로 이동/복원
-  - `새로 만들기`: `ShellNew` <-> `ShellNew_Disabled` 이름 변경
-- **자동 백업 및 원클릭 복원**: 항목 제거 전 `%LOCALAPPDATA%\ContextManager\backups`에 JSON 메타데이터와 `.reg` 파일을 자동 저장하고, 프로그램 내 `백업 / 복원` 창에서 바로 복원 가능
-- **관리자 권한 자동 실행 및 탐색기 연동**: 실행 시 관리자 권한(UAC)으로 시작하여 `HKCU`와 `HKLM` 항목을 모두 즉시 비활성화/제거할 수 있으며, 레지스트리 편집기(`regedit.exe`) 바로 열기와 탐색기 다시 시작 지원
+- **Comprehensive Scanning**:
+  - Static & dynamic Shell Verbs (`HKCU`/`HKLM` `*\shell`, `Directory\shell`, `Directory\Background\shell`, `Folder`, `Drive`, `DesktopBackground`, `SystemFileAssociations`, file extensions & ProgIDs)
+  - Classic COM Shell Extensions (`shellex\ContextMenuHandlers`)
+  - Windows 11 Modern Context Menus (MSIX / Sparse Package `IExplorerCommand`)
+  - Send To (`SendTo`)
+  - New Menu (`ShellNew`)
+- **Group by App & Bulk Cleanup**: Automatically groups entries sharing the same executable/DLL and display name across multiple registry locations. Even when working inside a single category, shows total locations across all categories and lets you include them all in the removal dialog.
+- **Orphaned Entry Detection**: Verifies whether the target executable or DLL still exists on disk and highlights missing entries as `[Missing File - Orphaned]`.
+- **Non-Destructive Disable (Hide) & Re-enable**:
+  - `Shell Verb`: toggles `LegacyDisable`
+  - `COM ShellEx` / `Win11 Modern`: registers/removes CLSID under `Shell Extensions\Blocked`
+  - `Send To`: moves files to/from `%LOCALAPPDATA%\ContextManager\disabled_sendto`
+  - `New Menu`: renames `ShellNew` <-> `ShellNew_Disabled`
+- **Automatic Backup & One-Click Restore**: Before deleting any entry, saves full registry snapshots (`.json` and `.reg`) and file copies under `%LOCALAPPDATA%\ContextManager\backups`. Restore anytime from the built-in **Backup / Restore** dialog.
+- **Auto Update**: Checks GitHub Releases on startup and on demand via the **Check Updates** button, with in-app download progress and silent installer handoff.
+- **Multilingual UI**: Default English with instant switching between English, Korean, Simplified Chinese, and Japanese.
+- **Administrator Privileges & Explorer Helpers**: Starts elevated (UAC) so both `HKCU` and `HKLM` entries work immediately, with quick links to open Regedit, open file locations, and restart Windows Explorer.
 
-## 설치
+## Installation
 
-[Releases](https://github.com/workingdad365/contextmanager/releases) 에서 `ContextManager-Setup-<버전>.exe` 를 내려받아 실행한다.
+Download `ContextManager-Setup-<version>.exe` from [Releases](https://github.com/workingdad365/contextmanager/releases) and run it.
 
-- 사용자별 폴더(`%LocalAppData%\Programs\ContextManager`)에 설치됨
-- 앱 실행 시 레지스트리(`HKLM` 포함) 편집을 위해 UAC 관리자 권한을 요청함
-- **설정 > 앱** 에서 제거할 수 있으며, 백업 폴더(`%LocalAppData%\ContextManager\backups`)는 유지됨
+- Installs per-user under `%LocalAppData%\Programs\ContextManager`
+- Prompts for Administrator (UAC) privileges on launch to edit system-wide (`HKLM`) context menu entries
+- Uninstall via **Settings > Apps** (your backups in `%LocalAppData%\ContextManager\backups` are preserved)
 
-## 빌드 및 릴리스
+## Build & Release
 
-### 요구 사항
+### Requirements
 
-- Windows 10/11
-- Rust 1.88 이상 (MSVC 툴체인, edition 2024)
-- Visual Studio Build Tools 와 Windows SDK
-- 설치 파일 생성 시: [Inno Setup 6](https://jrsoftware.org/isinfo.php) (`winget install JRSoftware.InnoSetup`)
-- 릴리스 게시 시: [GitHub CLI](https://cli.github.com) (`gh auth login` 완료 상태)
+- Windows 10 / 11
+- Rust 1.88+ (MSVC toolchain, edition 2024)
+- Visual Studio Build Tools & Windows SDK
+- Installer build: [Inno Setup 6](https://jrsoftware.org/isinfo.php) (`winget install JRSoftware.InnoSetup`)
+- Release publishing: [GitHub CLI](https://cli.github.com) (`gh auth login`)
 
-### 명령
-
-```powershell
-cargo build --release   # target\release\ContextManager.exe 생성
-cargo test              # 유닛 테스트
-```
-
-### 설치 파일 생성과 릴리스
+### Commands
 
 ```powershell
-.\build-installer.ps1                    # 릴리스 빌드 후 dist\ContextManager-Setup-<버전>.exe 생성
-.\build-installer.ps1 -Install           # 생성 직후 조용히 설치 (검증용)
+cargo build --release   # Build target\release\ContextManager.exe
+cargo test              # Run unit & integration tests
 
-.\release.ps1 "릴리스 설명"              # 버전 자동 증가 (1.0.0 -> 1.0.1) 후 GitHub Release 게시
-.\release.ps1 "릴리스 설명" -Bump minor  # 1.0.1 -> 1.1.0 (major 는 2.0.0)
-.\release.ps1 "릴리스 설명" -NoBump      # 현재 버전 그대로 게시 (첫 릴리스, 게시 실패 후 재시도용)
-.\release.ps1 "릴리스 설명" -DryRun      # 다음 버전만 출력
+.\build-installer.ps1                    # Build dist\ContextManager-Setup-<version>.exe
+.\build-installer.ps1 -Install           # Build and install silently
+
+.\release.ps1 "Release notes"              # Bump patch version and publish GitHub Release
+.\release.ps1 "Release notes" -Bump minor  # Bump minor version
+.\release.ps1 "Release notes" -NoBump      # Publish current version as-is
+.\release.ps1 "Release notes" -DryRun      # Print next version without changing files
 ```
 
-### 아이콘 재생성
+### Regenerating Icons & Screenshots
 
 ```powershell
 python tools/gen_icon.py
+cargo build
+python tools/capture_screenshots.py
 ```

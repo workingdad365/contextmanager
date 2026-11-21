@@ -251,7 +251,7 @@ pub fn delete_backup_record(record: &BackupRecord, backup_dir: &Path) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Category, Scope};
+    use crate::model::{Category, Scope, TargetLabel};
 
     #[test]
     fn backup_delete_and_restore_registry_and_file_roundtrip() {
@@ -284,7 +284,7 @@ mod tests {
             kind: EntryKind::ShellVerb,
             scope: Scope::User,
             category: Category::Directory,
-            target_label: "폴더".into(),
+            target_label: TargetLabel::Directory,
             registry_root: Some(RegRoot::Hkcu),
             registry_subkey: Some(reg_subkey.clone()),
             file_path: None,
@@ -306,7 +306,7 @@ mod tests {
             kind: EntryKind::SendTo,
             scope: Scope::User,
             category: Category::SendTo,
-            target_label: "보내기 메뉴".into(),
+            target_label: TargetLabel::SendTo,
             registry_root: None,
             registry_subkey: None,
             file_path: Some(sendto_file.to_string_lossy().into_owned()),

@@ -1,6 +1,7 @@
 //! ContextManager 메인 GUI (egui / eframe)
 
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver};
 
@@ -8,23 +9,35 @@ use eframe::egui;
 
 use crate::action::{self, ActionReport};
 use crate::backup::{self, BackupRecord};
+use crate::config::{APP_NAME, APP_VERSION, Config};
+use crate::i18n::Language;
 use crate::model::{
     Category, ContextEntry, EntryGroup, EntryKind, FilterOptions, build_groups, count_group_totals,
     find_related_unchecked_indices, matches_filter,
 };
 use crate::scanner::{self, ScanResult};
 use crate::system;
-
-pub const APP_NAME: &str = "ContextManager";
-pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+use crate::update::{self, UpdateInfo};
 
 const ICON_PNG: &[u8] = include_bytes!("../assets/contextmanager.png");
 
-pub fn run() {
+#[derive(Debug, Default)]
+pub struct LaunchOptions {
+    pub lang_override: Option<Language>,
+    pub ready_file: Option<PathBuf>,
+}
+
+pub fn run(opts: LaunchOptions) {
+    let mut config = Config::load();
+    let persist_lang = opts.lang_override.is_none();
+    if let Some(ov) = opts.lang_override {
+        config.language = ov;
+    }
+
     let mut viewport = egui::ViewportBuilder::default()
         .with_title(format!("{APP_NAME} v{APP_VERSION}"))
-        .with_inner_size([1160.0, 720.0])
-        .with_min_inner_size([860.0, 520.0]);
+        .with_inner_size([1200.0, 740.0])
+        .with_min_inner_size([880.0, 540.0]);
     if let Ok(icon) = eframe::icon_data::from_png_bytes(ICON_PNG) {
         viewport = viewport.with_icon(Arc::new(icon));
     }
@@ -34,12 +47,20 @@ pub fn run() {
         ..Default::default()
     };
 
+    let ready_file = opts.ready_file;
     let result = eframe::run_native(
         APP_NAME,
         options,
-        Box::new(|cc| {
-            setup_fonts(&cc.egui_ctx);
-            Ok(Box::new(ContextManagerApp::new(cc.egui_ctx.clone())))
+        Box::new(move |cc| {
+            let font_cache = FontCache::load();
+            apply_fonts(&cc.egui_ctx, &font_cache, config.language);
+            Ok(Box::new(ContextManagerApp::new(
+                cc.egui_ctx.clone(),
+                config,
+                persist_lang,
+                font_cache,
+                ready_file,
+            )))
         }),
     );
     if let Err(e) = result {
@@ -47,18 +68,72 @@ pub fn run() {
     }
 }
 
-/// 기본 폰트에 한글이 없으므로 맑은 고딕을 우선 폰트로 추가
-fn setup_fonts(ctx: &egui::Context) {
-    let windir = std::env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".into());
-    let path = std::path::Path::new(&windir).join("Fonts").join("malgun.ttf");
-    let Ok(bytes) = std::fs::read(path) else { return };
+/// Windows 시스템 CJK 폰트 캐시 (언어 전환 시 디스크 재읽기 없이 우선순위만 즉시 교체)
+struct FontCache {
+    ko: Option<Arc<egui::FontData>>,
+    zh: Option<Arc<egui::FontData>>,
+    ja: Option<Arc<egui::FontData>>,
+}
 
+impl FontCache {
+    fn load() -> Self {
+        let windir = std::env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".into());
+        let fonts_dir = Path::new(&windir).join("Fonts");
+        let load_first = |names: &[&str]| -> Option<Arc<egui::FontData>> {
+            for name in names {
+                if let Ok(bytes) = std::fs::read(fonts_dir.join(name)) {
+                    return Some(Arc::new(egui::FontData::from_owned(bytes)));
+                }
+            }
+            None
+        };
+        Self {
+            ko: load_first(&["malgun.ttf"]),
+            zh: load_first(&["msyh.ttc", "simsun.ttc"]),
+            ja: load_first(&["YuGothM.ttc", "YuGothR.ttc", "meiryo.ttc", "msgothic.ttc"]),
+        }
+    }
+}
+
+fn apply_fonts(ctx: &egui::Context, cache: &FontCache, lang: Language) {
     let mut fonts = egui::FontDefinitions::default();
-    fonts
-        .font_data
-        .insert("malgun".into(), Arc::new(egui::FontData::from_owned(bytes)));
+    if let Some(d) = &cache.ko {
+        fonts.font_data.insert("cjk_ko".into(), d.clone());
+    }
+    if let Some(d) = &cache.zh {
+        fonts.font_data.insert("cjk_zh".into(), d.clone());
+    }
+    if let Some(d) = &cache.ja {
+        fonts.font_data.insert("cjk_ja".into(), d.clone());
+    }
+
+    // 선택된 언어의 CJK 폰트를 최우선 배치하고 나머지 언어도 폴백으로 유지
+    let order: &[&str] = match lang {
+        Language::En => &["cjk_ko", "cjk_zh", "cjk_ja"],
+        Language::Ko => &["cjk_ko", "cjk_ja", "cjk_zh"],
+        Language::Zh => &["cjk_zh", "cjk_ko", "cjk_ja"],
+        Language::Ja => &["cjk_ja", "cjk_ko", "cjk_zh"],
+    };
+
     for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
-        fonts.families.entry(family).or_default().insert(0, "malgun".into());
+        let list = fonts.families.entry(family).or_default();
+        if lang == Language::En {
+            // 영어는 기본 라틴 글꼴을 유지하고 CJK 를 폴백으로 뒤에 추가
+            for &name in order {
+                if fonts.font_data.contains_key(name) {
+                    list.push(name.into());
+                }
+            }
+        } else {
+            // 한/중/일은 해당 언어 시스템 폰트를 최우선 삽입
+            let mut insert_at = 0;
+            for &name in order {
+                if fonts.font_data.contains_key(name) {
+                    list.insert(insert_at, name.into());
+                    insert_at += 1;
+                }
+            }
+        }
     }
     ctx.set_fonts(fonts);
 }
@@ -81,8 +156,23 @@ enum StatusMessage {
     Error(String),
 }
 
+struct UpdateCheckEvent {
+    manual: bool,
+    result: Result<Option<UpdateInfo>, String>,
+}
+
+enum UpdateInstallEvent {
+    Progress(f32),
+    Installed,
+    Failed(String),
+}
+
 struct ContextManagerApp {
     ctx: egui::Context,
+    config: Config,
+    persist_lang: bool,
+    font_cache: FontCache,
+
     entries: Vec<ContextEntry>,
     scanning: bool,
     scan_rx: Option<Receiver<ScanResult>>,
@@ -90,14 +180,20 @@ struct ContextManagerApp {
 
     filter: FilterOptions,
     view_mode: ViewMode,
-    /// 체크박스로 선택된 개별 항목 id 집합
     checked_ids: HashSet<String>,
-    /// 우측 상세 패널에 표시할 대상
     focused: Option<FocusedTarget>,
 
     is_elevated: bool,
-    os_label: String,
+    os_build: u32,
     message: Option<StatusMessage>,
+
+    // 업데이트 상태
+    update_available: Option<UpdateInfo>,
+    update_checking: bool,
+    update_check_rx: Option<Receiver<UpdateCheckEvent>>,
+    update_progress: Option<f32>,
+    update_error: Option<String>,
+    update_install_rx: Option<Receiver<UpdateInstallEvent>>,
 
     show_delete_modal: bool,
     include_related_on_delete: bool,
@@ -106,21 +202,26 @@ struct ContextManagerApp {
     backups: Vec<BackupRecord>,
     selected_backup_id: Option<String>,
     first_frame: bool,
+
+    // 자동 스크린샷 촬영 준비 알림용
+    ready_file: Option<PathBuf>,
+    ready_countdown: Option<u8>,
 }
 
 impl ContextManagerApp {
-    fn new(ctx: egui::Context) -> Self {
-        let build = system::windows_build_number();
-        let os_label = if build >= 22000 {
-            format!("Windows 11 (빌드 {build})")
-        } else if build > 0 {
-            format!("Windows 10 (빌드 {build})")
-        } else {
-            "Windows".to_string()
-        };
-
+    fn new(
+        ctx: egui::Context,
+        config: Config,
+        persist_lang: bool,
+        font_cache: FontCache,
+        ready_file: Option<PathBuf>,
+    ) -> Self {
+        let auto_update = ready_file.is_none();
         let mut app = Self {
             ctx,
+            config,
+            persist_lang,
+            font_cache,
             entries: Vec::new(),
             scanning: false,
             scan_rx: None,
@@ -130,8 +231,14 @@ impl ContextManagerApp {
             checked_ids: HashSet::new(),
             focused: None,
             is_elevated: system::is_elevated(),
-            os_label,
+            os_build: system::windows_build_number(),
             message: None,
+            update_available: None,
+            update_checking: false,
+            update_check_rx: None,
+            update_progress: None,
+            update_error: None,
+            update_install_rx: None,
             show_delete_modal: false,
             include_related_on_delete: false,
             show_backup_modal: false,
@@ -139,9 +246,29 @@ impl ContextManagerApp {
             backups: Vec::new(),
             selected_backup_id: None,
             first_frame: true,
+            ready_file,
+            ready_countdown: None,
         };
         app.start_scan();
+        if auto_update {
+            app.start_update_check(false);
+        }
         app
+    }
+
+    fn lang(&self) -> Language {
+        self.config.language
+    }
+
+    fn set_language(&mut self, next: Language) {
+        if self.config.language == next {
+            return;
+        }
+        self.config.language = next;
+        apply_fonts(&self.ctx, &self.font_cache, next);
+        if self.persist_lang {
+            let _ = self.config.save();
+        }
     }
 
     fn start_scan(&mut self) {
@@ -167,10 +294,129 @@ impl ContextManagerApp {
             self.scanning = false;
             self.scan_rx = None;
 
-            // 존재하지 않게 된 선택 ID 정리
             let valid_ids: HashSet<&str> = self.entries.iter().map(|e| e.id.as_str()).collect();
             self.checked_ids.retain(|id| valid_ids.contains(id.as_str()));
+
+            // 스크린샷 모드에서는 대표 그룹(여러 위치 포함 항목 우선)을 자동 선택해 상세 패널까지 채워지도록 준비
+            if self.ready_file.is_some() && self.ready_countdown.is_none() {
+                let filtered = self.filtered_indices();
+                let groups = build_groups(&self.entries, &filtered, self.lang());
+                let picked = groups
+                    .iter()
+                    .find(|g| g.entry_indices.len() >= 2 && !g.display_name.starts_with('"'))
+                    .or_else(|| groups.first());
+                if let Some(first) = picked {
+                    self.focused = Some(FocusedTarget::Group(first.key.clone()));
+                }
+                self.ready_countdown = Some(5);
+                self.ctx.request_repaint();
+            }
         }
+    }
+
+    fn start_update_check(&mut self, manual: bool) {
+        if self.update_checking || self.update_progress.is_some() {
+            return;
+        }
+        self.update_checking = true;
+        let (tx, rx) = mpsc::channel();
+        self.update_check_rx = Some(rx);
+        let ctx = self.ctx.clone();
+        std::thread::spawn(move || {
+            let result = update::check();
+            let _ = tx.send(UpdateCheckEvent { manual, result });
+            ctx.request_repaint();
+        });
+    }
+
+    fn poll_update(&mut self) {
+        if let Some(rx) = &self.update_check_rx {
+            if let Ok(ev) = rx.try_recv() {
+                self.update_checking = false;
+                self.update_check_rx = None;
+                let lang = self.lang();
+                match ev.result {
+                    Ok(Some(info)) => {
+                        let skipped = !ev.manual
+                            && self.config.skipped_version.as_deref() == Some(info.tag.as_str());
+                        if !skipped {
+                            self.update_available = Some(info);
+                            self.update_error = None;
+                        }
+                    }
+                    Ok(None) => {
+                        if ev.manual {
+                            self.update_available = None;
+                            self.message = Some(StatusMessage::Info(lang.fmt_already_latest(APP_VERSION)));
+                        }
+                    }
+                    Err(e) => {
+                        if ev.manual {
+                            self.message = Some(StatusMessage::Error(lang.fmt_update_check_failed(&e)));
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut close_app = false;
+        if let Some(rx) = &self.update_install_rx {
+            while let Ok(ev) = rx.try_recv() {
+                match ev {
+                    UpdateInstallEvent::Progress(p) => {
+                        self.update_progress = Some(p);
+                    }
+                    UpdateInstallEvent::Installed => {
+                        self.update_progress = None;
+                        close_app = true;
+                    }
+                    UpdateInstallEvent::Failed(err) => {
+                        self.update_progress = None;
+                        self.update_error = Some(err);
+                    }
+                }
+            }
+        }
+        if close_app {
+            self.update_install_rx = None;
+            self.ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        } else if self.update_progress.is_none() && self.update_error.is_some() {
+            self.update_install_rx = None;
+        }
+    }
+
+    fn install_update(&mut self, info: UpdateInfo) {
+        if self.update_progress.is_some() {
+            return;
+        }
+        self.update_progress = Some(0.0);
+        self.update_error = None;
+        let (tx, rx) = mpsc::channel();
+        self.update_install_rx = Some(rx);
+        let ctx = self.ctx.clone();
+        std::thread::spawn(move || {
+            let res = update::download(&info, |p| {
+                let _ = tx.send(UpdateInstallEvent::Progress(p));
+                ctx.request_repaint();
+            })
+            .and_then(|path| update::run_installer(&path));
+            match res {
+                Ok(()) => {
+                    let _ = tx.send(UpdateInstallEvent::Installed);
+                }
+                Err(e) => {
+                    let _ = tx.send(UpdateInstallEvent::Failed(e));
+                }
+            }
+            ctx.request_repaint();
+        });
+    }
+
+    fn skip_update(&mut self, info: &UpdateInfo) {
+        self.config.skipped_version = Some(info.tag.clone());
+        let _ = self.config.save();
+        self.update_available = None;
+        self.update_error = None;
     }
 
     fn refresh_backups(&mut self) {
@@ -186,10 +432,11 @@ impl ContextManagerApp {
     }
 
     fn filtered_indices(&self) -> Vec<usize> {
+        let lang = self.lang();
         self.entries
             .iter()
             .enumerate()
-            .filter(|(_, e)| matches_filter(e, &self.filter))
+            .filter(|(_, e)| matches_filter(e, &self.filter, lang))
             .map(|(i, _)| i)
             .collect()
     }
@@ -219,41 +466,34 @@ impl ContextManagerApp {
     }
 
     fn apply_toggle(&mut self, disable: bool) {
+        let lang = self.lang();
         let targets = self.checked_entries();
         if targets.is_empty() {
-            self.message = Some(StatusMessage::Warn("먼저 항목을 선택해 주세요.".into()));
+            self.message = Some(StatusMessage::Warn(lang.msg_select_first().into()));
             return;
         }
         let needs_explorer_hint = targets
             .iter()
             .any(|e| matches!(e.kind, EntryKind::ShellEx | EntryKind::Win11Packaged));
-        let admin_needed = targets.iter().filter(|e| e.requires_admin_to_toggle()).count();
         let related_remaining = find_related_unchecked_indices(&self.entries, &self.checked_ids).len();
         let report = action::set_entries_disabled(&targets, disable);
-        let verb = if disable { "비활성화(숨김)" } else { "다시 활성화" };
+        let verb = if disable { lang.verb_disabled() } else { lang.verb_enabled() };
         self.report_to_message(verb, &report, None);
         if report.errors.is_empty() {
             if let Some(StatusMessage::Info(msg)) = &mut self.message {
                 if related_remaining > 0 {
-                    msg.push_str(&format!(" (참고: 같은 프로그램의 다른 위치 {related_remaining}곳은 미선택 상태)"));
+                    msg.push_str(&lang.fmt_related_remaining_note(related_remaining));
                 }
                 if needs_explorer_hint {
-                    msg.push_str(" (COM 셸 확장/Win11 메뉴는 필요 시 '탐색기 다시 시작'으로 즉시 반영)");
+                    msg.push_str(lang.explorer_hint_note());
                 }
             }
-        }
-        if admin_needed > 0 && !self.is_elevated && !report.errors.is_empty() {
-            self.message = Some(StatusMessage::Error(format!(
-                "성공 {}건, 실패 {}건 - HKLM 항목 {}건은 관리자 권한으로 재실행한 뒤 변경해 주세요.",
-                report.succeeded,
-                report.errors.len(),
-                admin_needed
-            )));
         }
         self.start_scan();
     }
 
     fn apply_delete(&mut self, include_related: bool) {
+        let lang = self.lang();
         if include_related {
             let related = find_related_unchecked_indices(&self.entries, &self.checked_ids);
             for idx in related {
@@ -268,104 +508,196 @@ impl ContextManagerApp {
         match action::delete_entries_with_backup(&targets, &backup_dir) {
             Ok((rec, report)) => {
                 self.checked_ids.clear();
-                self.report_to_message("제거", &report, Some(&rec.id));
+                self.report_to_message(lang.verb_removed(), &report, Some(&rec.id));
                 self.start_scan();
             }
             Err(e) => {
-                self.message = Some(StatusMessage::Error(format!("백업 또는 삭제 실패: {e}")));
+                self.message = Some(StatusMessage::Error(lang.fmt_backup_or_delete_failed(&e)));
             }
         }
     }
 
     fn report_to_message(&mut self, verb: &str, report: &ActionReport, backup_id: Option<&str>) {
+        let lang = self.lang();
         if report.errors.is_empty() {
-            let mut msg = format!("{}개 항목을 {} 처리했습니다.", report.succeeded, verb);
-            if let Some(bid) = backup_id {
-                msg.push_str(&format!(" (자동 백업 완료: {bid})"));
-            }
+            let mut msg = lang.fmt_action_ok(report.succeeded, verb, backup_id);
             if !report.notes.is_empty() {
-                msg.push_str(&format!(" / 안내: {}", report.notes[0]));
+                msg.push_str(&format!(" / {}", report.notes[0]));
             }
             self.message = Some(StatusMessage::Info(msg));
         } else {
             let first_err = &report.errors[0];
-            let extra = if report.errors.len() > 1 {
-                format!(" 외 {}건 실패", report.errors.len() - 1)
-            } else {
-                String::new()
-            };
-            self.message = Some(StatusMessage::Error(format!(
-                "성공 {}건, 실패 {}건 - {}{}",
+            self.message = Some(StatusMessage::Error(lang.fmt_action_partial_err(
                 report.succeeded,
                 report.errors.len(),
                 first_err,
-                extra
             )));
         }
     }
 
-    fn top_toolbar(&mut self, ui: &mut egui::Ui) {
-        egui::Panel::top("toolbar").show(ui, |ui| {
+    fn update_banner(&mut self, ui: &mut egui::Ui) {
+        let Some(info) = self.update_available.clone() else {
+            return;
+        };
+        let lang = self.lang();
+        let busy = self.update_progress.is_some();
+        let mut do_install = false;
+        let mut do_skip = false;
+
+        egui::Panel::top("update_banner").show(ui, |ui| {
             ui.add_space(6.0);
             ui.horizontal_wrapped(|ui| {
-                ui.label("검색:");
+                ui.strong(lang.fmt_update_available(&info.version_text()));
+                ui.weak(lang.fmt_current_version(APP_VERSION));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .add_enabled(!busy, egui::Button::new(lang.btn_skip_version()))
+                        .clicked()
+                    {
+                        do_skip = true;
+                    }
+                    if ui
+                        .add_enabled(!busy, egui::Button::new(lang.btn_install_now()))
+                        .clicked()
+                    {
+                        do_install = true;
+                    }
+                });
+            });
+            if let Some(p) = self.update_progress {
+                ui.add(
+                    egui::ProgressBar::new(p)
+                        .show_percentage()
+                        .text(lang.fmt_downloading_update(p * 100.0)),
+                );
+            }
+            if let Some(ref err) = self.update_error {
+                ui.colored_label(ui.visuals().error_fg_color, lang.fmt_update_failed(err));
+            }
+            let notes = info.notes.trim();
+            if !notes.is_empty() {
+                egui::CollapsingHeader::new(lang.release_notes_header()).show(ui, |ui| {
+                    egui::ScrollArea::vertical().max_height(100.0).show(ui, |ui| {
+                        ui.label(notes);
+                    });
+                });
+            }
+            ui.add_space(4.0);
+        });
+
+        if do_install {
+            self.install_update(info);
+        } else if do_skip {
+            self.skip_update(&info);
+        }
+    }
+
+    fn top_toolbar(&mut self, ui: &mut egui::Ui) {
+        let lang = self.lang();
+        let mut next_lang = lang;
+        let mut do_check_updates = false;
+
+        egui::Panel::top("toolbar").show(ui, |ui| {
+            ui.add_space(6.0);
+            // 1줄: 검색창 + 우측 주요 도구 버튼 및 언어 선택
+            ui.horizontal(|ui| {
+                ui.label(lang.search_label());
                 ui.add(
                     egui::TextEdit::singleline(&mut self.filter.search)
-                        .hint_text("이름, 실행 경로, 확장자, CLSID...")
-                        .desired_width(240.0),
+                        .hint_text(lang.search_hint())
+                        .desired_width(280.0),
                 );
-                if !self.filter.search.is_empty() && ui.button("지우기").clicked() {
+                if !self.filter.search.is_empty() && ui.button(lang.btn_clear()).clicked() {
                     self.filter.search.clear();
                 }
 
-                ui.separator();
-                ui.checkbox(&mut self.filter.only_orphaned, "잔여 항목만 (파일 없음)")
-                    .on_hover_text("실행 파일이나 DLL이 디스크에 없는 찌꺼기 항목만 표시합니다.");
-                ui.checkbox(&mut self.filter.only_disabled, "비활성화됨만");
-                ui.checkbox(&mut self.filter.hide_system, "Microsoft 기본 항목 숨기기")
-                    .on_hover_text("Windows 기본 내장 항목을 목록에서 숨겨 실수로 삭제하지 않도록 보호합니다.");
-
-                ui.separator();
-                ui.selectable_value(&mut self.view_mode, ViewMode::Grouped, "앱별 묶어 보기")
-                    .on_hover_text("같은 프로그램의 여러 레지스트리 위치를 하나로 묶어 일괄 관리합니다.");
-                ui.selectable_value(&mut self.view_mode, ViewMode::Flat, "개별 항목 보기");
-
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("백업 / 복원").clicked() {
+                    egui::ComboBox::from_id_salt("lang_selector")
+                        .selected_text(lang.native_name())
+                        .width(98.0)
+                        .show_ui(ui, |ui| {
+                            for &l in Language::ALL {
+                                ui.selectable_value(&mut next_lang, l, l.native_name());
+                            }
+                        });
+
+                    if ui
+                        .add_enabled(
+                            !self.update_checking && self.update_progress.is_none(),
+                            egui::Button::new(if self.update_checking {
+                                lang.checking_updates()
+                            } else {
+                                lang.btn_check_updates()
+                            }),
+                        )
+                        .clicked()
+                    {
+                        do_check_updates = true;
+                    }
+
+                    if ui.button(lang.btn_backup_restore()).clicked() {
                         self.refresh_backups();
                         self.show_backup_modal = true;
                     }
-                    let refresh_btn = ui.add_enabled(!self.scanning, egui::Button::new("새로고침"));
+                    let refresh_btn = ui.add_enabled(!self.scanning, egui::Button::new(lang.btn_refresh()));
                     if refresh_btn.clicked() {
                         self.start_scan();
                     }
                     if self.scanning {
                         ui.spinner();
-                        ui.weak("스캔 중...");
+                        ui.weak(lang.scanning_label());
                     }
+                });
+            });
+
+            ui.add_space(4.0);
+            // 2줄: 필터 체크박스 + 우측 보기 모드 전환
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut self.filter.only_orphaned, lang.filter_orphaned())
+                    .on_hover_text(lang.filter_orphaned_tip());
+                ui.checkbox(&mut self.filter.only_disabled, lang.filter_disabled());
+                ui.checkbox(&mut self.filter.hide_system, lang.filter_hide_system())
+                    .on_hover_text(lang.filter_hide_system_tip());
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.selectable_value(&mut self.view_mode, ViewMode::Flat, lang.view_flat());
+                    ui.selectable_value(&mut self.view_mode, ViewMode::Grouped, lang.view_grouped())
+                        .on_hover_text(lang.view_grouped_tip());
                 });
             });
             ui.add_space(4.0);
         });
+
+        if next_lang != lang {
+            self.set_language(next_lang);
+        }
+        if do_check_updates {
+            self.start_update_check(true);
+        }
     }
 
     fn sidebar(&mut self, ui: &mut egui::Ui) {
+        let lang = self.lang();
         egui::Panel::left("categories")
             .resizable(true)
-            .default_size(215.0)
-            .min_size(170.0)
+            .default_size(225.0)
+            .min_size(180.0)
             .show(ui, |ui| {
                 ui.add_space(6.0);
-                ui.strong("우클릭 위치별 분류");
+                ui.strong(lang.sidebar_title());
                 ui.add_space(4.0);
                 egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                     for &cat in Category::SIDEBAR {
                         let (total, orphaned) = self.category_counts(cat);
                         let selected = self.filter.category == cat;
                         let label = if orphaned > 0 {
-                            format!("{}  ({total})  [잔여 {orphaned}]", cat.label())
+                            format!(
+                                "{}  ({total})  {}",
+                                cat.label(lang),
+                                lang.fmt_sidebar_orphan_badge(orphaned)
+                            )
                         } else {
-                            format!("{}  ({total})", cat.label())
+                            format!("{}  ({total})", cat.label(lang))
                         };
                         let mut text = egui::RichText::new(label);
                         if orphaned > 0 && !selected {
@@ -383,15 +715,16 @@ impl ContextManagerApp {
                     ui.separator();
                     ui.add_space(6.0);
                     ui.weak(format!("{APP_NAME} v{APP_VERSION}"));
-                    ui.weak(&self.os_label);
+                    ui.weak(lang.fmt_os_label(self.os_build));
                     if let Some(ms) = self.last_scan_ms {
-                        ui.weak(format!("전체 {}건 스캔 ({ms}ms)", self.entries.len()));
+                        ui.weak(lang.fmt_scan_stats(self.entries.len(), ms));
                     }
                 });
             });
     }
 
     fn bottom_bar(&mut self, ui: &mut egui::Ui) {
+        let lang = self.lang();
         let selected_count = self.checked_ids.len();
         let mut do_disable = false;
         let mut do_enable = false;
@@ -402,30 +735,35 @@ impl ContextManagerApp {
         egui::Panel::bottom("actions_bar").show(ui, |ui| {
             ui.add_space(6.0);
             ui.horizontal_wrapped(|ui| {
-                ui.strong(format!("선택됨: {selected_count}개"));
+                ui.strong(lang.fmt_selected_count(selected_count));
                 ui.separator();
                 if ui
-                    .add_enabled(selected_count > 0 && !self.scanning, egui::Button::new("비활성화 (숨기기)"))
-                    .on_hover_text("항목을 삭제하지 않고 탐색기 메뉴에서만 숨깁니다. 언제든 다시 켤 수 있습니다.")
+                    .add_enabled(
+                        selected_count > 0 && !self.scanning,
+                        egui::Button::new(lang.btn_disable()),
+                    )
+                    .on_hover_text(lang.btn_disable_tip())
                     .clicked()
                 {
                     do_disable = true;
                 }
                 if ui
-                    .add_enabled(selected_count > 0 && !self.scanning, egui::Button::new("다시 켜기"))
+                    .add_enabled(
+                        selected_count > 0 && !self.scanning,
+                        egui::Button::new(lang.btn_enable()),
+                    )
                     .clicked()
                 {
                     do_enable = true;
                 }
-                let del_text = egui::RichText::new("선택 항목 제거")
-                    .color(if selected_count > 0 {
-                        ui.visuals().error_fg_color
-                    } else {
-                        ui.visuals().weak_text_color()
-                    });
+                let del_text = egui::RichText::new(lang.btn_remove()).color(if selected_count > 0 {
+                    ui.visuals().error_fg_color
+                } else {
+                    ui.visuals().weak_text_color()
+                });
                 if ui
                     .add_enabled(selected_count > 0 && !self.scanning, egui::Button::new(del_text))
-                    .on_hover_text("제거 전 자동으로 백업을 저장한 뒤 선택한 항목을 삭제합니다.")
+                    .on_hover_text(lang.btn_remove_tip())
                     .clicked()
                 {
                     do_delete = true;
@@ -433,24 +771,24 @@ impl ContextManagerApp {
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
-                        .button("탐색기 다시 시작")
-                        .on_hover_text("COM 셸 확장이나 Windows 11 신형 메뉴 변경 사항을 즉시 반영할 때 사용합니다.")
+                        .button(lang.btn_restart_explorer())
+                        .on_hover_text(lang.btn_restart_explorer_tip())
                         .clicked()
                     {
                         do_restart_explorer = true;
                     }
                     ui.separator();
                     if self.is_elevated {
-                        ui.colored_label(egui::Color32::from_rgb(34, 197, 94), "관리자 권한");
+                        ui.colored_label(egui::Color32::from_rgb(34, 197, 94), lang.badge_admin());
                     } else {
                         if ui
-                            .button("관리자 권한으로 재실행")
-                            .on_hover_text("HKLM(시스템 전체) 항목을 수정하거나 제거하려면 관리자 권한이 필요합니다.")
+                            .button(lang.btn_relaunch_admin())
+                            .on_hover_text(lang.btn_relaunch_admin_tip())
                             .clicked()
                         {
                             do_elevate = true;
                         }
-                        ui.weak("일반 권한");
+                        ui.weak(lang.badge_standard_user());
                     }
                 });
             });
@@ -496,6 +834,7 @@ impl ContextManagerApp {
         groups: &[EntryGroup],
         group_totals: &HashMap<String, usize>,
     ) {
+        let lang = self.lang();
         let orphan_in_filtered: Vec<usize> = filtered
             .iter()
             .copied()
@@ -503,13 +842,16 @@ impl ContextManagerApp {
             .collect();
 
         ui.horizontal_wrapped(|ui| {
-            if ui.small_button("표시된 항목 모두 선택").clicked() {
+            if ui.small_button(lang.btn_select_all_visible()).clicked() {
                 for &i in filtered {
                     self.checked_ids.insert(self.entries[i].id.clone());
                 }
             }
             if ui
-                .add_enabled(!orphan_in_filtered.is_empty(), egui::Button::new("잔여 항목 모두 선택").small())
+                .add_enabled(
+                    !orphan_in_filtered.is_empty(),
+                    egui::Button::new(lang.btn_select_all_orphans()).small(),
+                )
                 .clicked()
             {
                 for &i in &orphan_in_filtered {
@@ -517,18 +859,16 @@ impl ContextManagerApp {
                 }
             }
             if ui
-                .add_enabled(!self.checked_ids.is_empty(), egui::Button::new("선택 해제").small())
+                .add_enabled(
+                    !self.checked_ids.is_empty(),
+                    egui::Button::new(lang.btn_deselect_all()).small(),
+                )
                 .clicked()
             {
                 self.checked_ids.clear();
             }
             ui.separator();
-            ui.weak(format!(
-                "표시: {}개 항목 ({}개 그룹) / 잔여 {}개",
-                filtered.len(),
-                groups.len(),
-                orphan_in_filtered.len()
-            ));
+            ui.weak(lang.fmt_list_summary(filtered.len(), groups.len(), orphan_in_filtered.len()));
         });
         ui.separator();
 
@@ -537,7 +877,7 @@ impl ContextManagerApp {
             ui.vertical_centered(|ui| {
                 ui.spinner();
                 ui.add_space(6.0);
-                ui.label("Windows 컨텍스트 메뉴를 스캔하고 있습니다...");
+                ui.label(lang.scanning_empty_text());
             });
             return;
         }
@@ -545,7 +885,7 @@ impl ContextManagerApp {
         if filtered.is_empty() {
             ui.add_space(40.0);
             ui.vertical_centered(|ui| {
-                ui.weak("조건에 맞는 컨텍스트 메뉴 항목이 없습니다.");
+                ui.weak(lang.no_matching_entries());
             });
             return;
         }
@@ -565,6 +905,7 @@ impl ContextManagerApp {
         groups: &[EntryGroup],
         group_totals: &HashMap<String, usize>,
     ) {
+        let lang = self.lang();
         let error_color = ui.visuals().error_fg_color;
         let warn_color = ui.visuals().warn_fg_color;
 
@@ -612,49 +953,44 @@ impl ContextManagerApp {
                             }
 
                             if group.all_orphaned {
-                                ui.colored_label(error_color, "[파일 없음 - 잔여 항목]");
+                                ui.colored_label(error_color, lang.badge_all_orphaned());
                             } else if group.any_orphaned {
-                                ui.colored_label(warn_color, "[일부 파일 없음]");
+                                ui.colored_label(warn_color, lang.badge_some_orphaned());
                             }
 
                             if group.all_disabled {
-                                ui.weak("[비활성화됨]");
+                                ui.weak(lang.badge_disabled());
                             } else if group.any_disabled {
-                                ui.weak("[일부 비활성화]");
+                                ui.weak(lang.badge_some_disabled());
                             }
 
                             if group.is_system {
-                                ui.weak("[시스템]");
+                                ui.weak(lang.badge_system());
                             }
 
                             let shown_cnt = group.entry_indices.len();
                             let total_cnt = group_totals.get(&group.key).copied().unwrap_or(shown_cnt);
                             if total_cnt > shown_cnt {
-                                ui.colored_label(
-                                    warn_color,
-                                    format!("(이 분류 {shown_cnt}곳 / 전체 {total_cnt}곳)"),
-                                )
-                                .on_hover_text(
-                                    "다른 분류에도 같은 프로그램의 컨텍스트 메뉴 항목이 더 있습니다.\n우측 상세 패널이나 삭제 확인 창에서 전체 위치를 한꺼번에 선택할 수 있습니다.",
-                                );
+                                ui.colored_label(warn_color, lang.fmt_group_partial_total(shown_cnt, total_cnt))
+                                    .on_hover_text(lang.group_partial_tip());
                             } else if shown_cnt > 1 {
-                                ui.weak(format!("({shown_cnt}곳)"));
+                                ui.weak(lang.fmt_group_count(shown_cnt));
                             }
                             if checked_cnt > 0 && !all_checked {
-                                ui.colored_label(warn_color, format!("[{checked_cnt}/{shown_cnt} 선택]"));
+                                ui.colored_label(warn_color, lang.fmt_partial_selected(checked_cnt, shown_cnt));
                             }
                         });
 
                         ui.horizontal_wrapped(|ui| {
                             ui.weak(format!(
                                 "{} | {} | {}",
-                                group.kind.label(),
+                                group.kind.label(lang),
                                 group.scope_label(),
                                 group.summary_targets
                             ));
                             if let Some(ref target) = group.resolved_target {
                                 ui.weak("|");
-                                ui.weak(truncate_middle(target, 68));
+                                ui.weak(truncate_middle(target, 64));
                             }
                         });
                     });
@@ -665,6 +1001,7 @@ impl ContextManagerApp {
     }
 
     fn render_flat_list(&mut self, ui: &mut egui::Ui, filtered: &[usize]) {
+        let lang = self.lang();
         let error_color = ui.visuals().error_fg_color;
 
         for &idx in filtered {
@@ -700,21 +1037,21 @@ impl ContextManagerApp {
                                 self.focused = Some(FocusedTarget::Entry(entry.id.clone()));
                             }
                             if entry.is_orphaned() {
-                                ui.colored_label(error_color, "[파일 없음]");
+                                ui.colored_label(error_color, lang.badge_orphaned_short());
                             }
                             if entry.disabled {
-                                ui.weak("[비활성화됨]");
+                                ui.weak(lang.badge_disabled());
                             }
                             if entry.is_system {
-                                ui.weak("[시스템]");
+                                ui.weak(lang.badge_system());
                             }
                         });
                         ui.weak(format!(
                             "{} | {} | {} | {}",
-                            entry.kind.label(),
+                            entry.kind.label(lang),
                             entry.scope.short_label(),
-                            entry.target_label,
-                            truncate_middle(&entry.location_display(), 72)
+                            entry.target_text(lang),
+                            truncate_middle(&entry.location_display(), 70)
                         ));
                     });
                 });
@@ -724,13 +1061,14 @@ impl ContextManagerApp {
     }
 
     fn detail_panel(&mut self, ui: &mut egui::Ui) {
+        let lang = self.lang();
         egui::Panel::right("detail_panel")
             .resizable(true)
-            .default_size(360.0)
+            .default_size(365.0)
             .min_size(270.0)
             .show(ui, |ui| {
                 ui.add_space(6.0);
-                ui.strong("상세 정보");
+                ui.strong(lang.detail_title());
                 ui.separator();
 
                 let target_indices: Vec<usize> = match &self.focused {
@@ -753,7 +1091,7 @@ impl ContextManagerApp {
 
                 if target_indices.is_empty() {
                     ui.add_space(24.0);
-                    ui.weak("목록에서 항목이나 그룹을 클릭하면\n실행 명령어, 파일 존재 여부, 포함된 모든 레지스트리 경로를 볼 수 있습니다.");
+                    ui.weak(lang.detail_empty_hint());
                     return;
                 }
 
@@ -770,24 +1108,30 @@ impl ContextManagerApp {
                             .num_columns(2)
                             .spacing([10.0, 6.0])
                             .show(ui, |ui| {
-                                ui.weak("유형");
-                                ui.label(first.kind.label());
+                                ui.weak(lang.meta_kind());
+                                ui.label(first.kind.label(lang));
                                 ui.end_row();
 
-                                ui.weak("범위");
-                                ui.label(first.scope.label());
+                                ui.weak(lang.meta_scope());
+                                ui.label(first.scope.label(lang));
                                 ui.end_row();
 
-                                ui.weak("파일 상태");
+                                ui.weak(lang.meta_file_status());
                                 match first.target_exists {
                                     Some(true) => {
-                                        ui.colored_label(egui::Color32::from_rgb(34, 197, 94), "실제 파일 존재함");
+                                        ui.colored_label(
+                                            egui::Color32::from_rgb(34, 197, 94),
+                                            lang.file_exists_ok(),
+                                        );
                                     }
                                     Some(false) => {
-                                        ui.colored_label(ui.visuals().error_fg_color, "파일 없음 (제거된 앱의 잔여 항목)");
+                                        ui.colored_label(
+                                            ui.visuals().error_fg_color,
+                                            lang.file_missing_orphan(),
+                                        );
                                     }
                                     None => {
-                                        ui.weak("확인 대상 파일 없음");
+                                        ui.weak(lang.file_status_none());
                                     }
                                 }
                                 ui.end_row();
@@ -798,7 +1142,7 @@ impl ContextManagerApp {
                                     ui.end_row();
                                 }
                                 if let Some(ref pkg) = first.package_name {
-                                    ui.weak("패키지");
+                                    ui.weak(lang.meta_package());
                                     ui.label(pkg);
                                     ui.end_row();
                                 }
@@ -806,14 +1150,14 @@ impl ContextManagerApp {
 
                         if let Some(ref target) = first.resolved_target {
                             ui.add_space(6.0);
-                            ui.weak("대상 실행 파일 / DLL:");
+                            ui.weak(lang.target_exe_label());
                             ui.monospace(target);
                             ui.horizontal(|ui| {
-                                if ui.small_button("경로 복사").clicked() {
+                                if ui.small_button(lang.btn_copy_path()).clicked() {
                                     ui.ctx().copy_text(target.clone());
-                                    self.message = Some(StatusMessage::Info("경로를 클립보드에 복사했습니다.".into()));
+                                    self.message = Some(StatusMessage::Info(lang.msg_copied_path().into()));
                                 }
-                                if ui.small_button("파일 위치 열기").clicked() {
+                                if ui.small_button(lang.btn_open_file_location()).clicked() {
                                     if let Err(e) = system::open_in_explorer(target) {
                                         self.message = Some(StatusMessage::Error(e));
                                     }
@@ -823,29 +1167,29 @@ impl ContextManagerApp {
 
                         if let Some(ref cmd) = first.command {
                             ui.add_space(6.0);
-                            ui.weak("실행 명령어:");
+                            ui.weak(lang.command_label());
                             ui.monospace(cmd);
                         }
 
                         if let Some(ref icon) = first.icon {
                             ui.add_space(4.0);
-                            ui.weak("아이콘:");
+                            ui.weak(lang.icon_label());
                             ui.monospace(icon);
                         }
 
                         ui.add_space(10.0);
                         ui.separator();
                         ui.horizontal_wrapped(|ui| {
-                            ui.strong(format!("포함된 등록 위치 (전체 {}곳)", target_indices.len()));
+                            ui.strong(lang.fmt_registered_locations(target_indices.len()));
                             if ui
-                                .small_button(format!("전체 {}곳 모두 체크", target_indices.len()))
+                                .small_button(lang.fmt_check_all_locations(target_indices.len()))
                                 .clicked()
                             {
                                 for &i in &target_indices {
                                     self.checked_ids.insert(self.entries[i].id.clone());
                                 }
                             }
-                            if ui.small_button("모두 해제").clicked() {
+                            if ui.small_button(lang.btn_uncheck_all()).clicked() {
                                 for &i in &target_indices {
                                     self.checked_ids.remove(&self.entries[i].id);
                                 }
@@ -875,35 +1219,41 @@ impl ContextManagerApp {
                                                 self.checked_ids.remove(&e.id);
                                             }
                                         }
-                                        ui.strong(&e.target_label);
+                                        ui.strong(e.target_text(lang));
                                         ui.weak(format!("[{}]", e.scope.short_label()));
                                         if outside_current_cat {
                                             ui.colored_label(
                                                 ui.visuals().warn_fg_color,
-                                                format!("[다른 분류: {}]", e.category.label()),
+                                                lang.fmt_other_category_badge(e.category.label(lang)),
                                             );
                                         }
                                         if e.disabled {
-                                            ui.weak("(비활성화)");
+                                            ui.weak(lang.tag_disabled_paren());
                                         }
                                         if e.is_orphaned() {
-                                            ui.colored_label(ui.visuals().error_fg_color, "(파일 없음)");
+                                            ui.colored_label(
+                                                ui.visuals().error_fg_color,
+                                                lang.tag_missing_paren(),
+                                            );
                                         }
                                     });
                                     ui.monospace(&loc_display);
                                     ui.horizontal(|ui| {
-                                        if ui.small_button("경로 복사").clicked() {
+                                        if ui.small_button(lang.btn_copy_path()).clicked() {
                                             ui.ctx().copy_text(loc_display.clone());
-                                            self.message = Some(StatusMessage::Info("등록 경로를 복사했습니다.".into()));
+                                            self.message =
+                                                Some(StatusMessage::Info(lang.msg_copied_path().into()));
                                         }
                                         if let Some(ref reg_path) = full_reg {
-                                            if ui.small_button("레지스트리 편집기에서 열기").clicked() {
+                                            if ui.small_button(lang.btn_open_regedit()).clicked() {
                                                 if let Err(err) = system::open_regedit_at(reg_path) {
                                                     self.message = Some(StatusMessage::Error(err));
                                                 }
                                             }
-                                        } else if let Some(ref fp) = e.disabled_file_path.as_ref().or(e.file_path.as_ref()) {
-                                            if ui.small_button("폴더에서 열기").clicked() {
+                                        } else if let Some(ref fp) =
+                                            e.disabled_file_path.as_ref().or(e.file_path.as_ref())
+                                        {
+                                            if ui.small_button(lang.btn_open_folder()).clicked() {
                                                 if let Err(err) = system::open_in_explorer(fp) {
                                                     self.message = Some(StatusMessage::Error(err));
                                                 }
@@ -921,6 +1271,7 @@ impl ContextManagerApp {
         if !self.show_delete_modal {
             return;
         }
+        let lang = self.lang();
         let related_indices = find_related_unchecked_indices(&self.entries, &self.checked_ids);
         let related_count = related_indices.len();
         if related_count == 0 {
@@ -930,7 +1281,7 @@ impl ContextManagerApp {
         let related_summary = if related_count > 0 {
             let mut cat_set: BTreeSet<&str> = BTreeSet::new();
             for &idx in &related_indices {
-                cat_set.insert(self.entries[idx].category.label());
+                cat_set.insert(self.entries[idx].category.label(lang));
             }
             cat_set.into_iter().collect::<Vec<_>>().join(", ")
         } else {
@@ -954,7 +1305,7 @@ impl ContextManagerApp {
         let preview_names: Vec<String> = effective_targets
             .iter()
             .take(10)
-            .map(|e| format!("- {} [{}] ({})", e.display_name, e.target_label, e.scope.short_label()))
+            .map(|e| format!("- {} [{}] ({})", e.display_name, e.target_text(lang), e.scope.short_label()))
             .collect();
 
         let mut confirm = false;
@@ -964,10 +1315,10 @@ impl ContextManagerApp {
 
         let resp = egui::Modal::new(egui::Id::unique("delete_confirm_modal")).show(ctx, |ui| {
             ui.set_width(520.0);
-            ui.heading("선택 항목 제거 확인");
+            ui.heading(lang.modal_delete_title());
             ui.add_space(6.0);
-            ui.label(format!("총 {total}개 항목을 레지스트리/파일에서 제거합니다."));
-            ui.weak("제거 직전에 자동으로 백업(.json 및 .reg)이 저장되므로, '백업 / 복원'에서 언제든 되돌릴 수 있습니다.");
+            ui.label(lang.fmt_modal_delete_desc(total));
+            ui.weak(lang.modal_delete_backup_hint());
 
             if related_count > 0 {
                 ui.add_space(8.0);
@@ -977,16 +1328,13 @@ impl ContextManagerApp {
                     .show(ui, |ui| {
                         ui.colored_label(
                             ui.visuals().warn_fg_color,
-                            format!("같은 프로그램의 다른 위치에 {related_count}개 항목이 더 남아 있습니다."),
+                            lang.fmt_modal_related_warn(related_count),
                         );
-                        ui.weak(format!("포함된 다른 분류: {related_summary}"));
+                        ui.weak(lang.fmt_modal_related_cats(&related_summary));
                         ui.add_space(4.0);
                         ui.checkbox(
                             &mut include_related,
-                            format!(
-                                "다른 위치 {related_count}곳도 함께 포함해서 모두 제거 (총 {}곳)",
-                                base_count + related_count
-                            ),
+                            lang.fmt_modal_include_related(related_count, base_count + related_count),
                         );
                     });
             }
@@ -995,9 +1343,7 @@ impl ContextManagerApp {
                 ui.add_space(4.0);
                 ui.colored_label(
                     ui.visuals().warn_fg_color,
-                    format!(
-                        "Windows 11 패키지 메뉴 {win11_count}건은 시스템 보호 영역이므로 파일 삭제 대신 차단(숨김) 목록에 등록됩니다."
-                    ),
+                    lang.fmt_modal_win11_note(win11_count),
                 );
             }
 
@@ -1005,9 +1351,7 @@ impl ContextManagerApp {
                 ui.add_space(4.0);
                 ui.colored_label(
                     ui.visuals().error_fg_color,
-                    format!(
-                        "HKLM(시스템 전체) 항목 {admin_needed}건은 관리자 권한이 없으면 제거에 실패합니다."
-                    ),
+                    lang.fmt_modal_admin_warn(admin_needed),
                 );
             }
 
@@ -1017,21 +1361,21 @@ impl ContextManagerApp {
                     ui.label(line);
                 }
                 if total > preview_names.len() {
-                    ui.weak(format!("... 외 {}건", total - preview_names.len()));
+                    ui.weak(lang.fmt_and_more(total - preview_names.len()));
                 }
             });
 
             ui.add_space(10.0);
             ui.horizontal(|ui| {
-                let btn_label = format!("백업 후 {total}개 제거");
-                let btn_text = egui::RichText::new(btn_label).color(ui.visuals().error_fg_color);
+                let btn_text = egui::RichText::new(lang.fmt_btn_backup_and_remove(total))
+                    .color(ui.visuals().error_fg_color);
                 if ui.button(btn_text).clicked() {
                     confirm = true;
                 }
-                if admin_needed > 0 && !self.is_elevated && ui.button("관리자 권한으로 재실행").clicked() {
+                if admin_needed > 0 && !self.is_elevated && ui.button(lang.btn_relaunch_admin()).clicked() {
                     elevate = true;
                 }
-                if ui.button("취소").clicked() {
+                if ui.button(lang.btn_cancel()).clicked() {
                     cancel = true;
                 }
             });
@@ -1060,6 +1404,7 @@ impl ContextManagerApp {
         if !self.show_backup_modal {
             return;
         }
+        let lang = self.lang();
         let mut close = false;
         let mut restore_record: Option<BackupRecord> = None;
         let mut delete_record: Option<BackupRecord> = None;
@@ -1067,20 +1412,20 @@ impl ContextManagerApp {
 
         let resp = egui::Modal::new(egui::Id::unique("backup_modal")).show(ctx, |ui| {
             ui.set_width(560.0);
-            ui.heading("백업 및 복원 관리");
+            ui.heading(lang.modal_backup_title());
             ui.add_space(4.0);
-            ui.weak(format!("저장 위치: {}", backup::default_backup_dir().display()));
+            ui.weak(lang.fmt_backup_location(&backup::default_backup_dir().display().to_string()));
             ui.add_space(6.0);
 
             if self.backups.is_empty() {
                 ui.add_space(16.0);
-                ui.weak("저장된 백업 기록이 없습니다. 항목을 제거하면 자동으로 백업이 생성됩니다.");
+                ui.weak(lang.backup_empty());
                 ui.add_space(16.0);
             } else {
                 egui::ScrollArea::vertical().max_height(240.0).show(ui, |ui| {
                     for rec in &self.backups {
                         let selected = self.selected_backup_id.as_deref() == Some(rec.id.as_str());
-                        let label = format!("{}  |  {} ({}건)", rec.created_at, rec.summary, rec.items.len());
+                        let label = format!("{}  |  {} ({})", rec.created_at, rec.summary, rec.items.len());
                         if ui
                             .add_sized([ui.available_width(), 24.0], egui::Button::selectable(selected, label))
                             .clicked()
@@ -1093,18 +1438,23 @@ impl ContextManagerApp {
                 if let Some(sel_id) = &self.selected_backup_id {
                     if let Some(rec) = self.backups.iter().find(|b| &b.id == sel_id) {
                         ui.separator();
-                        ui.weak(format!("선택한 백업 포함 항목 ({}건):", rec.items.len()));
+                        ui.weak(lang.fmt_backup_items_header(rec.items.len()));
                         egui::ScrollArea::vertical().max_height(100.0).show(ui, |ui| {
                             for item in &rec.items {
                                 let desc = match item {
-                                    backup::BackupItem::Registry { root, subkey, display_name, .. } => {
-                                        format!("- {display_name} ({})", root.format_short_path(subkey))
-                                    }
-                                    backup::BackupItem::File { original_path, display_name, .. } => {
-                                        format!("- {display_name} ({original_path})")
-                                    }
+                                    backup::BackupItem::Registry {
+                                        root,
+                                        subkey,
+                                        display_name,
+                                        ..
+                                    } => format!("- {display_name} ({})", root.format_short_path(subkey)),
+                                    backup::BackupItem::File {
+                                        original_path,
+                                        display_name,
+                                        ..
+                                    } => format!("- {display_name} ({original_path})"),
                                     backup::BackupItem::Win11Block { clsid, display_name } => {
-                                        format!("- {display_name} (Win11 차단 해제: {clsid})")
+                                        format!("- {display_name} (Win11 Unblock: {clsid})")
                                     }
                                 };
                                 ui.label(desc);
@@ -1113,10 +1463,10 @@ impl ContextManagerApp {
 
                         ui.add_space(8.0);
                         ui.horizontal(|ui| {
-                            if ui.button("선택한 백업 복원").clicked() {
+                            if ui.button(lang.btn_restore_backup()).clicked() {
                                 restore_record = Some(rec.clone());
                             }
-                            if ui.button("백업 기록 삭제").clicked() {
+                            if ui.button(lang.btn_delete_backup()).clicked() {
                                 delete_record = Some(rec.clone());
                             }
                         });
@@ -1126,10 +1476,10 @@ impl ContextManagerApp {
 
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                if ui.button("백업 폴더 열기").clicked() {
+                if ui.button(lang.btn_open_backup_folder()).clicked() {
                     open_folder = true;
                 }
-                if ui.button("닫기").clicked() {
+                if ui.button(lang.btn_close()).clicked() {
                     close = true;
                 }
             });
@@ -1146,16 +1496,12 @@ impl ContextManagerApp {
             let dir = backup::default_backup_dir();
             let rep = backup::restore_backup(&rec, &dir);
             if rep.errors.is_empty() {
-                self.message = Some(StatusMessage::Info(format!(
-                    "백업({})의 {}개 항목을 복원했습니다.",
-                    rec.created_at, rep.succeeded
-                )));
+                self.message = Some(StatusMessage::Info(lang.fmt_restore_ok(&rec.created_at, rep.succeeded)));
             } else {
-                self.message = Some(StatusMessage::Error(format!(
-                    "복원 성공 {}건, 실패 {}건 - {}",
+                self.message = Some(StatusMessage::Error(lang.fmt_restore_err(
                     rep.succeeded,
                     rep.errors.len(),
-                    rep.errors[0]
+                    &rep.errors[0],
                 )));
             }
             self.show_backup_modal = false;
@@ -1175,20 +1521,21 @@ impl ContextManagerApp {
         if !self.show_restart_explorer_modal {
             return;
         }
+        let lang = self.lang();
         let mut confirm = false;
         let mut cancel = false;
         let resp = egui::Modal::new(egui::Id::unique("restart_explorer_modal")).show(ctx, |ui| {
             ui.set_width(400.0);
-            ui.heading("Windows 탐색기 다시 시작");
+            ui.heading(lang.modal_explorer_title());
             ui.add_space(6.0);
-            ui.label("탐색기(explorer.exe)를 종료한 뒤 다시 실행합니다.");
-            ui.weak("작업 표시줄과 열려 있는 폴더 창이 잠시 닫혔다가 다시 열립니다.");
+            ui.label(lang.modal_explorer_desc());
+            ui.weak(lang.modal_explorer_hint());
             ui.add_space(10.0);
             ui.horizontal(|ui| {
-                if ui.button("다시 시작").clicked() {
+                if ui.button(lang.btn_restart_now()).clicked() {
                     confirm = true;
                 }
-                if ui.button("취소").clicked() {
+                if ui.button(lang.btn_cancel()).clicked() {
                     cancel = true;
                 }
             });
@@ -1198,7 +1545,7 @@ impl ContextManagerApp {
             self.show_restart_explorer_modal = false;
             match system::restart_explorer() {
                 Ok(()) => {
-                    self.message = Some(StatusMessage::Info("Windows 탐색기를 다시 시작했습니다.".into()));
+                    self.message = Some(StatusMessage::Info(lang.msg_explorer_restarted().into()));
                 }
                 Err(e) => {
                     self.message = Some(StatusMessage::Error(e));
@@ -1206,6 +1553,22 @@ impl ContextManagerApp {
             }
         } else if cancel || resp.should_close() {
             self.show_restart_explorer_modal = false;
+        }
+    }
+
+    fn handle_ready_signal(&mut self, ctx: &egui::Context) {
+        let Some(ref out_path) = self.ready_file.clone() else {
+            return;
+        };
+        if let Some(rem) = self.ready_countdown {
+            if rem > 0 {
+                self.ready_countdown = Some(rem - 1);
+                ctx.request_repaint();
+            } else {
+                let _ = std::fs::write(out_path, "ready");
+                self.ready_file = None;
+                self.ready_countdown = None;
+            }
         }
     }
 }
@@ -1217,20 +1580,22 @@ impl eframe::App for ContextManagerApp {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Focus);
         }
 
-        // F5 새로고침
         if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::F5)) && !self.scanning {
             self.start_scan();
         }
 
         self.poll_scan();
+        self.poll_update();
 
+        self.update_banner(ui);
         self.top_toolbar(ui);
         self.bottom_bar(ui);
         self.sidebar(ui);
         self.detail_panel(ui);
 
+        let lang = self.lang();
         let filtered = self.filtered_indices();
-        let groups = build_groups(&self.entries, &filtered);
+        let groups = build_groups(&self.entries, &filtered, lang);
         let group_totals = count_group_totals(&self.entries);
 
         egui::CentralPanel::default().show(ui, |ui| {
@@ -1242,6 +1607,7 @@ impl eframe::App for ContextManagerApp {
         self.delete_confirm_modal(&ctx);
         self.backup_modal(&ctx);
         self.restart_explorer_modal(&ctx);
+        self.handle_ready_signal(&ctx);
     }
 }
 
