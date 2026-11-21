@@ -596,14 +596,6 @@ impl Language {
             Language::Ja => format!(" (参考: 同じアプリの他 {count} 箇所は未選択)"),
         }
     }
-    pub fn explorer_hint_note(self) -> &'static str {
-        self.pick(
-            " (Restart Explorer if COM/Win11 changes do not apply immediately)",
-            " (COM 셸 확장/Win11 메뉴는 필요 시 '탐색기 다시 시작'으로 즉시 반영)",
-            " (COM 扩展/Win11 菜单如需立即生效请重启资源管理器)",
-            " (COM/Win11 項目は必要に応じてエクスプローラー再起動で即時反映)",
-        )
-    }
     pub fn fmt_action_partial_err(self, ok: usize, fail: usize, first: &str) -> String {
         match self {
             Language::En => format!("Succeeded: {ok}, Failed: {fail} - {first}"),
@@ -783,6 +775,44 @@ impl Language {
     }
     pub fn msg_explorer_restarted(self) -> &'static str {
         self.pick("Windows Explorer restarted.", "Windows 탐색기를 다시 시작했습니다.", "已重启 Windows 资源管理器。", "Windows エクスプローラーを再起動しました。")
+    }
+    pub fn modal_explorer_needed_title(self) -> &'static str {
+        self.pick(
+            "Restart Explorer to Apply Changes",
+            "변경 사항 반영을 위해 탐색기 다시 시작 필요",
+            "需要重启资源管理器以应用更改",
+            "変更を反映するにはエクスプローラーの再起動が必要です",
+        )
+    }
+    pub fn fmt_modal_explorer_needed_desc(self, kinds: &str) -> String {
+        match self {
+            Language::En => format!(
+                "Changes to {kinds} are cached by Windows Explorer. Restart Explorer now to reflect them in the right-click menu immediately?"
+            ),
+            Language::Ko => format!(
+                "{kinds} 항목은 Windows 탐색기가 메모리에 캐시하므로, 지금 탐색기를 다시 시작해야 우클릭 메뉴에 즉시 반영됩니다. 지금 다시 시작할까요?"
+            ),
+            Language::Zh => format!(
+                "{kinds} 项会被 Windows 资源管理器缓存，需要重启资源管理器才能立即在右键菜单中生效。是否立即重启？"
+            ),
+            Language::Ja => format!(
+                "{kinds} 項目は Windows エクスプローラーにキャッシュされるため、右クリックメニューへ即時反映するには再起動が必要です。今すぐ再起動しますか？"
+            ),
+        }
+    }
+    pub fn btn_restart_later(self) -> &'static str {
+        self.pick("Later", "나중에 하기", "稍后重启", "あとで行う")
+    }
+    pub fn explorer_pending_banner(self) -> &'static str {
+        self.pick(
+            "Some changes require restarting Windows Explorer to appear in the right-click menu.",
+            "일부 변경 사항은 Windows 탐색기를 다시 시작해야 우클릭 메뉴에 반영됩니다.",
+            "部分更改需要重启 Windows 资源管理器后才会生效。",
+            "一部の変更は Windows エクスプローラーを再起動すると右クリックメニューに反映されます。",
+        )
+    }
+    pub fn btn_restart_explorer_needed(self) -> &'static str {
+        self.pick("Restart Explorer *", "탐색기 다시 시작 *", "重启资源管理器 *", "エクスプローラー再起動 *")
     }
 
     // --- Add / Edit Shell Command modal ---

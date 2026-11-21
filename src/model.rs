@@ -64,6 +64,14 @@ impl EntryKind {
             EntryKind::ShellNew => "shellnew",
         }
     }
+
+    /// 변경 사항(숨기기/복원/삭제)을 즉시 반영하기 위해 탐색기 재시작이 필요한 유형인지 여부
+    pub fn needs_explorer_restart(self) -> bool {
+        matches!(
+            self,
+            EntryKind::ShellEx | EntryKind::Win11Packaged | EntryKind::ShellNew
+        )
+    }
 }
 
 /// 사용자 기준 우클릭 위치 카테고리
@@ -511,5 +519,14 @@ mod tests {
         let totals = count_group_totals(&entries);
         assert_eq!(totals.get(&entries[0].group_key), Some(&3));
         assert_eq!(totals.get(&entries[3].group_key), Some(&1));
+    }
+
+    #[test]
+    fn explorer_restart_requirement_matches_entry_kind() {
+        assert!(!EntryKind::ShellVerb.needs_explorer_restart());
+        assert!(!EntryKind::SendTo.needs_explorer_restart());
+        assert!(EntryKind::ShellEx.needs_explorer_restart());
+        assert!(EntryKind::Win11Packaged.needs_explorer_restart());
+        assert!(EntryKind::ShellNew.needs_explorer_restart());
     }
 }

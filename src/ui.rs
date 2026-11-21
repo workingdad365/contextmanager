@@ -203,6 +203,10 @@ struct ContextManagerApp {
     include_related_on_delete: bool,
     show_backup_modal: bool,
     show_restart_explorer_modal: bool,
+    /// COM / Win11 / ShellNew 변경 후 아직 탐색기를 재시작하지 않았는지 여부
+    explorer_restart_pending: bool,
+    /// 자동 재시작 안내 모달에 표시할 변경된 유형 요약 (수동 클릭 시 None)
+    explorer_restart_kinds: Option<String>,
     shell_editor: Option<ShellCommandSpec>,
     shell_editor_error: Option<String>,
     backups: Vec<BackupRecord>,
@@ -249,6 +253,8 @@ impl ContextManagerApp {
             include_related_on_delete: false,
             show_backup_modal: false,
             show_restart_explorer_modal: false,
+            explorer_restart_pending: false,
+            explorer_restart_kinds: None,
             shell_editor: None,
             shell_editor_error: None,
             backups: Vec::new(),
@@ -480,21 +486,21 @@ impl ContextManagerApp {
             self.message = Some(StatusMessage::Warn(lang.msg_select_first().into()));
             return;
         }
-        let needs_explorer_hint = targets
-            .iter()
-            .any(|e| matches!(e.kind, EntryKind::ShellEx | EntryKind::Win11Packaged));
+        let restart_kinds = collect_restart_kinds(&targets, lang);
         let related_remaining = find_related_unchecked_indices(&self.entries, &self.checked_ids).len();
         let report = action::set_entries_disabled(&targets, disable);
         let verb = if disable { lang.verb_disabled() } else { lang.verb_enabled() };
         self.report_to_message(verb, &report, None);
-        if report.errors.is_empty() {
+        if report.errors.is_empty() && related_remaining > 0 {
             if let Some(StatusMessage::Info(msg)) = &mut self.message {
-                if related_remaining > 0 {
-                    msg.push_str(&lang.fmt_related_remaining_note(related_remaining));
-                }
-                if needs_explorer_hint {
-                    msg.push_str(lang.explorer_hint_note());
-                }
+                msg.push_str(&lang.fmt_related_remaining_note(related_remaining));
+            }
+        }
+        if report.succeeded > 0 {
+            if let Some(kinds_text) = restart_kinds {
+                self.explorer_restart_pending = true;
+                self.explorer_restart_kinds = Some(kinds_text);
+                self.show_restart_explorer_modal = true;
             }
         }
         self.start_scan();
@@ -512,11 +518,19 @@ impl ContextManagerApp {
         if targets.is_empty() {
             return;
         }
+        let restart_kinds = collect_restart_kinds(&targets, lang);
         let backup_dir = backup::default_backup_dir();
         match action::delete_entries_with_backup(&targets, &backup_dir) {
             Ok((rec, report)) => {
                 self.checked_ids.clear();
                 self.report_to_message(lang.verb_removed(), &report, Some(&rec.id));
+                if report.succeeded > 0 {
+                    if let Some(kinds_text) = restart_kinds {
+                        self.explorer_restart_pending = true;
+                        self.explorer_restart_kinds = Some(kinds_text);
+                        self.show_restart_explorer_modal = true;
+                    }
+                }
                 self.start_scan();
             }
             Err(e) => {
@@ -540,6 +554,41 @@ impl ContextManagerApp {
                 report.errors.len(),
                 first_err,
             )));
+        }
+    }
+
+    fn explorer_restart_banner(&mut self, ui: &mut egui::Ui) {
+        if !self.explorer_restart_pending {
+            return;
+        }
+        let lang = self.lang();
+        let mut do_restart = false;
+        let mut dismiss = false;
+
+        egui::Panel::top("explorer_restart_banner").show(ui, |ui| {
+            ui.add_space(4.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.colored_label(ui.visuals().warn_fg_color, lang.explorer_pending_banner());
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.small_button(lang.btn_close()).clicked() {
+                        dismiss = true;
+                    }
+                    let btn = egui::RichText::new(lang.btn_restart_now())
+                        .color(ui.visuals().warn_fg_color)
+                        .strong();
+                    if ui.button(btn).clicked() {
+                        do_restart = true;
+                    }
+                });
+            });
+            ui.add_space(4.0);
+        });
+
+        if do_restart {
+            self.explorer_restart_kinds = None;
+            self.show_restart_explorer_modal = true;
+        } else if dismiss {
+            self.explorer_restart_pending = false;
         }
     }
 
@@ -791,8 +840,15 @@ impl ContextManagerApp {
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let explorer_btn_text = if self.explorer_restart_pending {
+                        egui::RichText::new(lang.btn_restart_explorer_needed())
+                            .color(ui.visuals().warn_fg_color)
+                            .strong()
+                    } else {
+                        egui::RichText::new(lang.btn_restart_explorer())
+                    };
                     if ui
-                        .button(lang.btn_restart_explorer())
+                        .button(explorer_btn_text)
                         .on_hover_text(lang.btn_restart_explorer_tip())
                         .clicked()
                     {
@@ -844,6 +900,7 @@ impl ContextManagerApp {
                 Err(e) => self.message = Some(StatusMessage::Error(e)),
             }
         } else if do_restart_explorer {
+            self.explorer_restart_kinds = None;
             self.show_restart_explorer_modal = true;
         }
     }
@@ -1532,6 +1589,7 @@ impl ContextManagerApp {
         }
         if let Some(rec) = restore_record {
             let dir = backup::default_backup_dir();
+            let needs_restart = backup_needs_explorer_restart(&rec, lang);
             let rep = backup::restore_backup(&rec, &dir);
             if rep.errors.is_empty() {
                 self.message = Some(StatusMessage::Info(lang.fmt_restore_ok(&rec.created_at, rep.succeeded)));
@@ -1543,6 +1601,13 @@ impl ContextManagerApp {
                 )));
             }
             self.show_backup_modal = false;
+            if rep.succeeded > 0 {
+                if let Some(kinds_text) = needs_restart {
+                    self.explorer_restart_pending = true;
+                    self.explorer_restart_kinds = Some(kinds_text);
+                    self.show_restart_explorer_modal = true;
+                }
+            }
             self.start_scan();
         } else if let Some(rec) = delete_record {
             let dir = backup::default_backup_dir();
@@ -1560,20 +1625,34 @@ impl ContextManagerApp {
             return;
         }
         let lang = self.lang();
+        let auto_kinds = self.explorer_restart_kinds.clone();
         let mut confirm = false;
         let mut cancel = false;
         let resp = egui::Modal::new(egui::Id::unique("restart_explorer_modal")).show(ctx, |ui| {
-            ui.set_width(400.0);
-            ui.heading(lang.modal_explorer_title());
-            ui.add_space(6.0);
-            ui.label(lang.modal_explorer_desc());
+            ui.set_width(450.0);
+            if let Some(ref kinds) = auto_kinds {
+                ui.heading(lang.modal_explorer_needed_title());
+                ui.add_space(6.0);
+                ui.label(lang.fmt_modal_explorer_needed_desc(kinds));
+            } else {
+                ui.heading(lang.modal_explorer_title());
+                ui.add_space(6.0);
+                ui.label(lang.modal_explorer_desc());
+            }
+            ui.add_space(4.0);
             ui.weak(lang.modal_explorer_hint());
             ui.add_space(10.0);
             ui.horizontal(|ui| {
-                if ui.button(lang.btn_restart_now()).clicked() {
+                let restart_text = egui::RichText::new(lang.btn_restart_now()).strong();
+                if ui.button(restart_text).clicked() {
                     confirm = true;
                 }
-                if ui.button(lang.btn_cancel()).clicked() {
+                let later_label = if auto_kinds.is_some() {
+                    lang.btn_restart_later()
+                } else {
+                    lang.btn_cancel()
+                };
+                if ui.button(later_label).clicked() {
                     cancel = true;
                 }
             });
@@ -1581,8 +1660,10 @@ impl ContextManagerApp {
 
         if confirm {
             self.show_restart_explorer_modal = false;
+            self.explorer_restart_kinds = None;
             match system::restart_explorer() {
                 Ok(()) => {
+                    self.explorer_restart_pending = false;
                     self.message = Some(StatusMessage::Info(lang.msg_explorer_restarted().into()));
                 }
                 Err(e) => {
@@ -1591,6 +1672,7 @@ impl ContextManagerApp {
             }
         } else if cancel || resp.should_close() {
             self.show_restart_explorer_modal = false;
+            self.explorer_restart_kinds = None;
         }
     }
 
@@ -1842,6 +1924,7 @@ impl eframe::App for ContextManagerApp {
         self.poll_update();
 
         self.update_banner(ui);
+        self.explorer_restart_banner(ui);
         self.top_toolbar(ui);
         self.bottom_bar(ui);
         self.sidebar(ui);
@@ -1863,6 +1946,45 @@ impl eframe::App for ContextManagerApp {
         self.restart_explorer_modal(&ctx);
         self.shell_command_modal(&ctx);
         self.handle_ready_signal(&ctx);
+    }
+}
+
+fn collect_restart_kinds(entries: &[&ContextEntry], lang: Language) -> Option<String> {
+    let mut kinds: BTreeSet<&'static str> = BTreeSet::new();
+    for e in entries {
+        if e.kind.needs_explorer_restart() {
+            kinds.insert(e.kind.label(lang));
+        }
+    }
+    if kinds.is_empty() {
+        None
+    } else {
+        Some(kinds.into_iter().collect::<Vec<_>>().join(", "))
+    }
+}
+
+fn backup_needs_explorer_restart(rec: &BackupRecord, lang: Language) -> Option<String> {
+    let mut kinds: BTreeSet<&'static str> = BTreeSet::new();
+    for item in &rec.items {
+        match item {
+            backup::BackupItem::Win11Block { .. } => {
+                kinds.insert(EntryKind::Win11Packaged.label(lang));
+            }
+            backup::BackupItem::Registry { subkey, .. } => {
+                let lower = subkey.to_ascii_lowercase();
+                if lower.contains("\\shellex\\contextmenuhandlers\\") {
+                    kinds.insert(EntryKind::ShellEx.label(lang));
+                } else if lower.ends_with("\\shellnew") || lower.ends_with("\\shellnew_disabled") {
+                    kinds.insert(EntryKind::ShellNew.label(lang));
+                }
+            }
+            backup::BackupItem::File { .. } => {}
+        }
+    }
+    if kinds.is_empty() {
+        None
+    } else {
+        Some(kinds.into_iter().collect::<Vec<_>>().join(", "))
     }
 }
 
