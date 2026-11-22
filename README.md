@@ -4,7 +4,7 @@
 
 <h1 align="center">ContextManager</h1>
 
-<p align="center">Windows 10 / 11 File Explorer Context Menu Manager (Inspect, Disable, Backup & Remove)<br>v1.2.0</p>
+<p align="center">Windows 10 / 11 File Explorer Context Menu Manager (Inspect, Disable, Backup & Remove)<br>v1.2.1</p>
 
 <p align="center">
   <b>English</b> | <a href="README.ko.md">한국어</a> | <a href="README.zh.md">中文(简体)</a> | <a href="README.ja.md">日本語</a>
