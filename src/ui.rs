@@ -1226,6 +1226,14 @@ impl ContextManagerApp {
                             if group.is_system {
                                 ui.weak(lang.badge_system());
                             }
+                            if group.all_extended || group.any_extended {
+                                ui.weak(lang.badge_extended())
+                                    .on_hover_text(lang.badge_extended_tip());
+                            }
+                            if group.all_os_hidden {
+                                ui.weak(lang.badge_os_hidden())
+                                    .on_hover_text(lang.badge_os_hidden_tip());
+                            }
 
                             let shown_cnt = group.entry_indices.len();
                             let total_cnt = group_totals.get(&group.key).copied().unwrap_or(shown_cnt);
@@ -1314,6 +1322,14 @@ impl ContextManagerApp {
                             }
                             if entry.is_system {
                                 ui.weak(lang.badge_system());
+                            }
+                            if entry.extended {
+                                ui.weak(lang.badge_extended())
+                                    .on_hover_text(lang.badge_extended_tip());
+                            }
+                            if entry.os_hidden {
+                                ui.weak(lang.badge_os_hidden())
+                                    .on_hover_text(lang.badge_os_hidden_tip());
                             }
                         });
                         ui.weak(format!(
@@ -1440,6 +1456,17 @@ impl ContextManagerApp {
                                 }
                             });
 
+                        if first.extended {
+                            ui.add_space(4.0);
+                            ui.colored_label(
+                                ui.visuals().warn_fg_color,
+                                lang.detail_extended_notice(),
+                            );
+                        }
+                        if first.os_hidden {
+                            ui.add_space(4.0);
+                            ui.weak(lang.detail_os_hidden_notice());
+                        }
                         if !first.can_delete() {
                             ui.add_space(4.0);
                             ui.colored_label(
@@ -1540,6 +1567,14 @@ impl ContextManagerApp {
                                         }
                                         if e.disabled {
                                             ui.weak(lang.tag_disabled_paren());
+                                        }
+                                        if e.extended {
+                                            ui.weak(lang.badge_extended())
+                                                .on_hover_text(lang.badge_extended_tip());
+                                        }
+                                        if e.os_hidden {
+                                            ui.weak(lang.badge_os_hidden())
+                                                .on_hover_text(lang.badge_os_hidden_tip());
                                         }
                                         if e.is_orphaned() {
                                             ui.colored_label(

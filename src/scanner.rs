@@ -274,6 +274,8 @@ impl ScanContext {
             }
 
             let disabled = verb_key.value_exists("LegacyDisable");
+            let extended = verb_key.value_exists("Extended");
+            let os_hidden = verb_key.value_exists("HideBasedOnVelocityId");
             let raw_display = verb_key
                 .read_string("MUIVerb")
                 .filter(|s| !s.trim().is_empty())
@@ -477,6 +479,8 @@ impl ScanContext {
                 package_name: None,
                 icon,
                 disabled,
+                extended,
+                os_hidden,
                 is_system,
                 group_key,
             });
@@ -512,6 +516,8 @@ impl ScanContext {
                 continue;
             };
             let disabled = verb_key.value_exists("LegacyDisable");
+            let extended = verb_key.value_exists("Extended");
+            let os_hidden = verb_key.value_exists("HideBasedOnVelocityId");
             let raw_display = verb_key
                 .read_string("MUIVerb")
                 .filter(|s| !s.trim().is_empty())
@@ -571,6 +577,8 @@ impl ScanContext {
                 package_name: None,
                 icon,
                 disabled,
+                extended,
+                os_hidden,
                 is_system,
                 group_key,
             });
@@ -668,6 +676,8 @@ impl ScanContext {
                 package_name: None,
                 icon: None,
                 disabled,
+                extended: false,
+                os_hidden: false,
                 is_system,
                 group_key,
             });
@@ -804,6 +814,8 @@ impl ScanContext {
                     package_name: Some(pkg_full_name.clone()),
                     icon: pkg_logo.clone(),
                     disabled,
+                    extended: false,
+                    os_hidden: false,
                     is_system,
                     group_key,
                 });
@@ -913,6 +925,8 @@ impl ScanContext {
                 package_name: None,
                 icon: None,
                 disabled,
+                extended: false,
+                os_hidden: false,
                 is_system,
                 group_key,
             });
@@ -1084,6 +1098,8 @@ impl ScanContext {
             package_name: None,
             icon: None,
             disabled,
+            extended: false,
+            os_hidden: false,
             is_system,
             group_key,
         });

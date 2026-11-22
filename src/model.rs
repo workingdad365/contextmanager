@@ -177,6 +177,10 @@ pub struct ContextEntry {
     pub package_name: Option<String>,
     pub icon: Option<String>,
     pub disabled: bool,
+    /// Shift + 우클릭 시에만 표시되는 확장 메뉴(Extended 값 존재)
+    pub extended: bool,
+    /// Windows 내부 플래그(HideBasedOnVelocityId)로 숨겨진 기본 항목
+    pub os_hidden: bool,
     pub is_system: bool,
     pub group_key: String,
 }
@@ -269,6 +273,9 @@ pub struct EntryGroup {
     pub all_orphaned: bool,
     pub any_disabled: bool,
     pub all_disabled: bool,
+    pub any_extended: bool,
+    pub all_extended: bool,
+    pub all_os_hidden: bool,
     pub has_user_scope: bool,
     pub has_system_scope: bool,
     pub is_system: bool,
@@ -311,11 +318,13 @@ impl Default for FilterOptions {
 }
 
 /// 개별 항목이 필터 조건에 맞는지 검사
+/// 검색어가 입력된 경우 Microsoft 기본 항목도 함께 검색되도록 허용
 pub fn matches_filter(entry: &ContextEntry, filter: &FilterOptions, lang: Language) -> bool {
     if filter.category != Category::All && entry.category != filter.category {
         return false;
     }
-    if filter.hide_system && entry.is_system && !entry.is_orphaned() {
+    let q = filter.search.trim().to_ascii_lowercase();
+    if filter.hide_system && q.is_empty() && entry.is_system && !entry.is_orphaned() {
         return false;
     }
     if filter.only_orphaned && !entry.is_orphaned() {
@@ -327,12 +336,12 @@ pub fn matches_filter(entry: &ContextEntry, filter: &FilterOptions, lang: Langua
     if filter.hide_disabled && entry.disabled {
         return false;
     }
-    let q = filter.search.trim().to_ascii_lowercase();
     if !q.is_empty() {
         let tgt = entry.target_text(lang).to_ascii_lowercase();
         let hit = entry.display_name.to_ascii_lowercase().contains(&q)
             || entry.raw_name.to_ascii_lowercase().contains(&q)
             || tgt.contains(&q)
+            || (entry.extended && (q == "extended" || q == "shift"))
             || entry
                 .resolved_target
                 .as_deref()
@@ -383,6 +392,9 @@ pub fn build_groups(entries: &[ContextEntry], filtered_indices: &[usize], lang: 
             let all_orphaned = indices.iter().all(|&i| entries[i].is_orphaned());
             let any_disabled = indices.iter().any(|&i| entries[i].disabled);
             let all_disabled = indices.iter().all(|&i| entries[i].disabled);
+            let any_extended = indices.iter().any(|&i| entries[i].extended);
+            let all_extended = indices.iter().all(|&i| entries[i].extended);
+            let all_os_hidden = indices.iter().all(|&i| entries[i].os_hidden);
             let has_user_scope = indices.iter().any(|&i| entries[i].scope == Scope::User);
             let has_system_scope = indices.iter().any(|&i| entries[i].scope == Scope::System);
             let is_system = indices.iter().all(|&i| entries[i].is_system);
@@ -424,6 +436,9 @@ pub fn build_groups(entries: &[ContextEntry], filtered_indices: &[usize], lang: 
                 all_orphaned,
                 any_disabled,
                 all_disabled,
+                any_extended,
+                all_extended,
+                all_os_hidden,
                 has_user_scope,
                 has_system_scope,
                 is_system,
@@ -549,6 +564,8 @@ mod tests {
             package_name: None,
             icon: None,
             disabled: false,
+            extended: false,
+            os_hidden: false,
             is_system: false,
             group_key,
         }
@@ -596,6 +613,20 @@ mod tests {
         };
         assert!(!matches_filter(&disabled_entry, &f_hide, Language::En));
         assert!(matches_filter(&entries[1], &f_hide, Language::En));
+
+        // hide_system=true 여도 검색어를 입력하면 시스템 기본 항목이 검색되어야 함
+        let mut sys_pwsh = entries[1].clone();
+        sys_pwsh.display_name = "Open PowerShell window here".into();
+        sys_pwsh.raw_name = "Powershell".into();
+        sys_pwsh.is_system = true;
+        sys_pwsh.extended = true;
+        let f_default = FilterOptions::default();
+        assert!(!matches_filter(&sys_pwsh, &f_default, Language::En));
+        let f_search = FilterOptions {
+            search: "powershell".into(),
+            ..Default::default()
+        };
+        assert!(matches_filter(&sys_pwsh, &f_search, Language::En));
     }
 
     #[test]

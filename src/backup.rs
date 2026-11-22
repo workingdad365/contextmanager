@@ -298,6 +298,8 @@ mod tests {
             package_name: None,
             icon: None,
             disabled: false,
+            extended: false,
+            os_hidden: false,
             is_system: false,
             group_key: "g1".into(),
         };
@@ -322,6 +324,8 @@ mod tests {
             package_name: None,
             icon: None,
             disabled: false,
+            extended: false,
+            os_hidden: false,
             is_system: false,
             group_key: "g2".into(),
         };

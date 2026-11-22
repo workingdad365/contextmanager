@@ -187,10 +187,10 @@ impl Language {
     }
     pub fn filter_hide_system_tip(self) -> &'static str {
         self.pick(
-            "Hide built-in Windows entries to prevent accidental removal.",
-            "Windows 기본 내장 항목을 목록에서 숨겨 실수로 삭제하지 않도록 보호합니다.",
-            "隐藏 Windows 内置项，防止误删系统功能。",
-            "誤削除を防ぐため Windows 標準項目を一覧から隠します。",
+            "Hide built-in Windows entries to prevent accidental removal.\nBuilt-in entries are still included when you enter a search term.",
+            "Windows 기본 내장 항목을 목록에서 숨겨 실수로 삭제하지 않도록 보호합니다.\n검색어를 입력하면 Microsoft 기본 항목도 함께 검색됩니다.",
+            "隐藏 Windows 内置项，防止误删系统功能。\n输入搜索词时仍会一并搜索内置项。",
+            "誤削除を防ぐため Windows 標準項目を一覧から隠します。\n検索語を入力すると標準項目も一緒に検索されます。",
         )
     }
     pub fn view_grouped(self) -> &'static str {
@@ -381,6 +381,44 @@ impl Language {
     }
     pub fn badge_system(self) -> &'static str {
         self.pick("[System]", "[시스템]", "[系统]", "[システム]")
+    }
+    pub fn badge_extended(self) -> &'static str {
+        self.pick("[Shift+Right-Click]", "[Shift+우클릭]", "[Shift+右键]", "[Shift+右クリック]")
+    }
+    pub fn badge_extended_tip(self) -> &'static str {
+        self.pick(
+            "Has the Extended registry flag: hidden from normal right-click menus and shown only when holding Shift while right-clicking.",
+            "레지스트리에 Extended 값이 설정되어 있어 일반 우클릭 메뉴에는 나타나지 않고, Shift 키를 누른 채 우클릭할 때만 표시됩니다.",
+            "注册表设置了 Extended 标志：普通右键菜单中不显示，仅在按住 Shift 键右键点击时出现。",
+            "レジストリに Extended 値が設定されているため通常の右クリックには表示されず、Shift キーを押しながら右クリックしたときのみ表示されます。",
+        )
+    }
+    pub fn badge_os_hidden(self) -> &'static str {
+        self.pick("[OS Hidden]", "[OS 숨김]", "[系统隐藏]", "[OS 非表示]")
+    }
+    pub fn badge_os_hidden_tip(self) -> &'static str {
+        self.pick(
+            "Hidden by Windows internal feature flag (HideBasedOnVelocityId).",
+            "Windows 내부 기능 플래그(HideBasedOnVelocityId)에 의해 탐색기에서 숨겨진 항목입니다.",
+            "已被 Windows 内部功能标志 (HideBasedOnVelocityId) 在资源管理器中隐藏。",
+            "Windows の内部機能フラグ (HideBasedOnVelocityId) によりエクスプローラーで非表示になっています。",
+        )
+    }
+    pub fn detail_extended_notice(self) -> &'static str {
+        self.pick(
+            "Display condition: Shift + Right-Click only (Extended). This item does not appear on a normal right-click; hold Shift while right-clicking (or open the classic menu) to see it.",
+            "표시 조건: Shift + 우클릭 전용 (Extended) - 일반 우클릭 메뉴에는 나타나지 않으며, Shift 키를 누른 채 우클릭할 때만 표시됩니다.",
+            "显示条件: 仅 Shift + 右键显示 (Extended) - 普通右键菜单中不会出现，需按住 Shift 键右键点击才会显示。",
+            "表示条件: Shift + 右クリック専用 (Extended) - 通常の右クリックメニューには表示されず、Shift キーを押しながら右クリックしたときのみ表示されます。",
+        )
+    }
+    pub fn detail_os_hidden_notice(self) -> &'static str {
+        self.pick(
+            "Note: This built-in item is hidden from Explorer by Windows (HideBasedOnVelocityId).",
+            "안내: Windows 내부 기능 플래그(HideBasedOnVelocityId)에 의해 탐색기에서 숨겨져 있는 기본 항목입니다.",
+            "提示: 此内置项已被 Windows 内部标志 (HideBasedOnVelocityId) 隐藏。",
+            "案内: この標準項目は Windows 内部フラグ (HideBasedOnVelocityId) により非表示になっています。",
+        )
     }
     pub fn fmt_group_partial_total(self, shown: usize, total: usize) -> String {
         match self {
