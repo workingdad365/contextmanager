@@ -15,6 +15,11 @@ pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub struct Config {
     pub language: Language,
     pub skipped_version: Option<String>,
+    pub only_orphaned: bool,
+    pub only_disabled: bool,
+    pub hide_disabled: bool,
+    pub hide_system: bool,
+    pub flat_view: bool,
 }
 
 impl Default for Config {
@@ -22,6 +27,11 @@ impl Default for Config {
         Self {
             language: Language::En,
             skipped_version: None,
+            only_orphaned: false,
+            only_disabled: false,
+            hide_disabled: false,
+            hide_system: true,
+            flat_view: false,
         }
     }
 }
@@ -42,7 +52,12 @@ impl Config {
         let Ok(text) = fs::read_to_string(path) else {
             return Self::default();
         };
-        serde_json::from_str(&text).unwrap_or_default()
+        let mut cfg: Self = serde_json::from_str(&text).unwrap_or_default();
+        // 상호 배타 필터 충돌 방지
+        if cfg.only_disabled && cfg.hide_disabled {
+            cfg.only_disabled = false;
+        }
+        cfg
     }
 
     pub fn save(&self) -> Result<(), String> {
@@ -73,6 +88,11 @@ mod tests {
         let mut custom = Config {
             language: Language::Ko,
             skipped_version: Some("v1.0.1".into()),
+            only_orphaned: true,
+            only_disabled: false,
+            hide_disabled: true,
+            hide_system: false,
+            flat_view: true,
         };
         custom.save_to(&tmp).unwrap();
         let loaded = Config::load_from(&tmp);
@@ -81,6 +101,14 @@ mod tests {
         custom.language = Language::Ja;
         custom.save_to(&tmp).unwrap();
         assert_eq!(Config::load_from(&tmp).language, Language::Ja);
+
+        // 상호 배타 옵션(only_disabled + hide_disabled) 동시 true 일 때 정리 검증
+        fs::write(&tmp, r#"{"only_disabled":true,"hide_disabled":true}"#).unwrap();
+        let norm = Config::load_from(&tmp);
+        assert!(!norm.only_disabled);
+        assert!(norm.hide_disabled);
+        assert!(norm.hide_system);
+
         let _ = fs::remove_file(&tmp);
     }
 }

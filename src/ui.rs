@@ -234,6 +234,24 @@ impl ContextManagerApp {
     ) -> Self {
         let auto_update = ready_file.is_none();
         let icon_cache = IconCache::new(ctx.clone());
+        let (filter, view_mode) = if ready_file.is_some() {
+            (FilterOptions::default(), ViewMode::Grouped)
+        } else {
+            (
+                FilterOptions {
+                    only_orphaned: config.only_orphaned,
+                    only_disabled: config.only_disabled,
+                    hide_disabled: config.hide_disabled,
+                    hide_system: config.hide_system,
+                    ..FilterOptions::default()
+                },
+                if config.flat_view {
+                    ViewMode::Flat
+                } else {
+                    ViewMode::Grouped
+                },
+            )
+        };
         let mut app = Self {
             ctx,
             config,
@@ -247,8 +265,8 @@ impl ContextManagerApp {
             scan_generation: 0,
             probing: false,
             probe_rx: None,
-            filter: FilterOptions::default(),
-            view_mode: ViewMode::Grouped,
+            filter,
+            view_mode,
             checked_ids: HashSet::new(),
             focused: None,
             is_elevated: system::is_elevated(),
@@ -294,6 +312,19 @@ impl ContextManagerApp {
         if self.persist_lang {
             let _ = self.config.save();
         }
+    }
+
+    /// 필터 체크박스 및 보기 모드 선택 상태를 설정 파일에 저장
+    fn save_ui_prefs(&mut self) {
+        if !self.persist_lang {
+            return;
+        }
+        self.config.only_orphaned = self.filter.only_orphaned;
+        self.config.only_disabled = self.filter.only_disabled;
+        self.config.hide_disabled = self.filter.hide_disabled;
+        self.config.hide_system = self.filter.hide_system;
+        self.config.flat_view = self.view_mode == ViewMode::Flat;
+        let _ = self.config.save();
     }
 
     fn start_scan(&mut self) {
@@ -796,32 +827,60 @@ impl ContextManagerApp {
 
             ui.add_space(4.0);
             // 2줄: 필터 체크박스 + 우측 보기 모드 전환
+            let mut prefs_changed = false;
             ui.horizontal(|ui| {
-                ui.checkbox(&mut self.filter.only_orphaned, lang.filter_orphaned())
-                    .on_hover_text(lang.filter_orphaned_tip());
+                if ui
+                    .checkbox(&mut self.filter.only_orphaned, lang.filter_orphaned())
+                    .on_hover_text(lang.filter_orphaned_tip())
+                    .changed()
+                {
+                    prefs_changed = true;
+                }
                 if ui
                     .checkbox(&mut self.filter.only_disabled, lang.filter_disabled())
                     .changed()
-                    && self.filter.only_disabled
                 {
-                    self.filter.hide_disabled = false;
+                    if self.filter.only_disabled {
+                        self.filter.hide_disabled = false;
+                    }
+                    prefs_changed = true;
                 }
                 if ui
                     .checkbox(&mut self.filter.hide_disabled, lang.filter_hide_disabled())
                     .changed()
-                    && self.filter.hide_disabled
                 {
-                    self.filter.only_disabled = false;
+                    if self.filter.hide_disabled {
+                        self.filter.only_disabled = false;
+                    }
+                    prefs_changed = true;
                 }
-                ui.checkbox(&mut self.filter.hide_system, lang.filter_hide_system())
-                    .on_hover_text(lang.filter_hide_system_tip());
+                if ui
+                    .checkbox(&mut self.filter.hide_system, lang.filter_hide_system())
+                    .on_hover_text(lang.filter_hide_system_tip())
+                    .changed()
+                {
+                    prefs_changed = true;
+                }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.selectable_value(&mut self.view_mode, ViewMode::Flat, lang.view_flat());
-                    ui.selectable_value(&mut self.view_mode, ViewMode::Grouped, lang.view_grouped())
-                        .on_hover_text(lang.view_grouped_tip());
+                    if ui
+                        .selectable_value(&mut self.view_mode, ViewMode::Flat, lang.view_flat())
+                        .changed()
+                    {
+                        prefs_changed = true;
+                    }
+                    if ui
+                        .selectable_value(&mut self.view_mode, ViewMode::Grouped, lang.view_grouped())
+                        .on_hover_text(lang.view_grouped_tip())
+                        .changed()
+                    {
+                        prefs_changed = true;
+                    }
                 });
             });
+            if prefs_changed {
+                self.save_ui_prefs();
+            }
             ui.add_space(4.0);
         });
 

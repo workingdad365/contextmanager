@@ -237,9 +237,30 @@ impl ScanContext {
         target_label: &TargetLabel,
     ) {
         let shell_subkey = format!("{classes_base}\\{rel_target}\\shell");
-        let Some(shell_key) = RegKey::open_read(root, &shell_subkey) else {
-            return;
+        self.scan_shell_at(root, scope, &shell_subkey, category, target_label, None, false, 0);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn scan_shell_at(
+        &mut self,
+        root: RegRoot,
+        scope: Scope,
+        shell_subkey: &str,
+        category: Category,
+        target_label: &TargetLabel,
+        parent_display: Option<&str>,
+        parent_is_system: bool,
+        depth: u8,
+    ) -> (Vec<String>, Option<String>) {
+        if depth > 2 {
+            return (Vec::new(), None);
+        }
+        let Some(shell_key) = RegKey::open_read(root, shell_subkey) else {
+            return (Vec::new(), None);
         };
+
+        let mut collected_labels: Vec<String> = Vec::new();
+        let mut first_exe: Option<String> = None;
 
         for verb in shell_key.enum_subkeys() {
             let verb_subkey = format!("{shell_subkey}\\{verb}");
@@ -258,13 +279,20 @@ impl ScanContext {
                 .filter(|s| !s.trim().is_empty())
                 .or_else(|| verb_key.read_default_string().filter(|s| !s.trim().is_empty()))
                 .unwrap_or_else(|| verb.clone());
-            let display_name = resolve_mui_string(&raw_display);
+            let own_display = resolve_mui_string(&raw_display);
+            let display_name = match parent_display {
+                Some(p) => format!("{p} > {own_display}"),
+                None => own_display.clone(),
+            };
 
             let icon = verb_key.read_string("Icon").filter(|s| !s.trim().is_empty());
 
             // 명령줄 / 핸들러 / 하위 메뉴 해석
             let cmd_key = verb_key.open_subkey_read("command");
-            let command = cmd_key.as_ref().and_then(|c| c.read_default_string()).filter(|s| !s.trim().is_empty());
+            let command = cmd_key
+                .as_ref()
+                .and_then(|c| c.read_default_string())
+                .filter(|s| !s.trim().is_empty());
             let delegate_clsid = cmd_key
                 .as_ref()
                 .and_then(|c| c.read_string("DelegateExecute"))
@@ -272,7 +300,10 @@ impl ScanContext {
             let handler_clsid = verb_key
                 .read_string("ExplorerCommandHandler")
                 .filter(|s| !s.trim().is_empty());
-            let clsid = handler_clsid.or(delegate_clsid).map(|c| normalize_clsid(&c)).filter(|c| !c.is_empty());
+            let clsid = handler_clsid
+                .or(delegate_clsid)
+                .map(|c| normalize_clsid(&c))
+                .filter(|c| !c.is_empty());
 
             let clsid_info = clsid.as_deref().and_then(|c| self.lookup_clsid(c));
             let clsid_description = clsid_info
@@ -280,6 +311,15 @@ impl ScanContext {
                 .and_then(|i| i.name.as_deref())
                 .map(resolve_mui_string)
                 .filter(|s| !s.is_empty());
+
+            let ext_subcommands_key = verb_key
+                .read_string("ExtendedSubCommandsKey")
+                .map(|s| s.trim().trim_start_matches('\\').to_string())
+                .filter(|s| !s.is_empty());
+            let subcommands_val = verb_key.read_string("SubCommands");
+            let has_inline_shell = verb_key.open_subkey_read("shell").is_some();
+            let has_subcommands =
+                ext_subcommands_key.is_some() || subcommands_val.is_some() || has_inline_shell;
 
             // 실제 실행 파일 / DLL 대상 추출
             let mut extracted_path = command.as_deref().and_then(extract_executable_from_command);
@@ -290,23 +330,6 @@ impl ScanContext {
                 }
             }
 
-            // 캐스케이드(하위 메뉴) 항목이면 첫 번째 하위 명령 또는 아이콘에서 대상 파일 추출
-            if extracted_path.is_none() {
-                if let Some(nested) = verb_key.open_subkey_read("shell") {
-                    for sub_verb in nested.enum_subkeys() {
-                        if let Some(sub_cmd) = nested
-                            .open_subkey_read(&format!("{sub_verb}\\command"))
-                            .and_then(|c| c.read_default_string())
-                        {
-                            if let Some(p) = extract_executable_from_command(&sub_cmd) {
-                                extracted_path = Some(p);
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-
             if extracted_path.is_none() {
                 if let Some(ref ic) = icon {
                     extracted_path = extract_path_from_icon(ic);
@@ -314,9 +337,89 @@ impl ScanContext {
             }
 
             // 명령, CLSID, 하위 메뉴, 아이콘이 모두 없는 빈 키는 스킵
-            let has_subcommands = verb_key.value_exists("SubCommands") || verb_key.open_subkey_read("shell").is_some();
             if command.is_none() && clsid.is_none() && !has_subcommands && icon.is_none() {
                 continue;
+            }
+
+            // 캐스케이드 하위 메뉴 스캔 (개별 제어 가능하도록 하위 항목도 각각 등록)
+            let preliminary_system =
+                parent_is_system || is_likely_system_entry(&verb, extracted_path.as_deref(), None);
+            let mut sub_labels: Vec<String> = Vec::new();
+            let mut sub_first_exe: Option<String> = None;
+
+            if depth < 2 {
+                // 1) 인라인 하위 shell 키 (...\shell\<verb>\shell\*)
+                if has_inline_shell {
+                    let inline_sub = format!("{verb_subkey}\\shell");
+                    let (lbls, exe) = self.scan_shell_at(
+                        root,
+                        scope,
+                        &inline_sub,
+                        category,
+                        target_label,
+                        Some(&display_name),
+                        preliminary_system,
+                        depth + 1,
+                    );
+                    sub_labels.extend(lbls);
+                    if sub_first_exe.is_none() {
+                        sub_first_exe = exe;
+                    }
+                }
+
+                // 2) ExtendedSubCommandsKey (예: Directory\ContextMenus\PowerShell7x64)
+                if let Some(ref ext_rel) = ext_subcommands_key {
+                    let candidates: &[(RegRoot, Scope, &str)] = match root {
+                        RegRoot::Hkcu => &[
+                            (RegRoot::Hkcu, Scope::User, "Software\\Classes"),
+                            (RegRoot::Hklm, Scope::System, "SOFTWARE\\Classes"),
+                        ],
+                        RegRoot::Hklm => &[(RegRoot::Hklm, Scope::System, "SOFTWARE\\Classes")],
+                    };
+                    for &(sub_root, sub_scope, base) in candidates {
+                        let ext_shell = format!("{base}\\{ext_rel}\\shell");
+                        if RegKey::open_read(sub_root, &ext_shell).is_some() {
+                            let (lbls, exe) = self.scan_shell_at(
+                                sub_root,
+                                sub_scope,
+                                &ext_shell,
+                                category,
+                                target_label,
+                                Some(&display_name),
+                                preliminary_system,
+                                depth + 1,
+                            );
+                            sub_labels.extend(lbls);
+                            if sub_first_exe.is_none() {
+                                sub_first_exe = exe;
+                            }
+                            break;
+                        }
+                    }
+                }
+
+                // 3) SubCommands (세미콜론으로 구분된 Explorer\CommandStore\shell\<name>)
+                if let Some(ref sc_list) = subcommands_val {
+                    for part in sc_list.split(';').map(str::trim).filter(|s| !s.is_empty() && *s != "|") {
+                        let (lbl, exe) = self.scan_command_store_item(
+                            part,
+                            category,
+                            target_label,
+                            &display_name,
+                            preliminary_system,
+                        );
+                        if let Some(l) = lbl {
+                            sub_labels.push(l);
+                        }
+                        if sub_first_exe.is_none() {
+                            sub_first_exe = exe;
+                        }
+                    }
+                }
+            }
+
+            if extracted_path.is_none() {
+                extracted_path = sub_first_exe;
             }
 
             let (resolved_target, target_exists) = match extracted_path {
@@ -327,8 +430,23 @@ impl ScanContext {
                 None => (None, None),
             };
 
+            if first_exe.is_none() {
+                first_exe = resolved_target.clone();
+            }
+            collected_labels.push(own_display);
+
+            // 중복 제거된 하위 메뉴 라벨 정리
+            let mut menu_labels = Vec::new();
+            let mut seen_lbl = HashSet::new();
+            for lbl in sub_labels {
+                if seen_lbl.insert(lbl.to_ascii_lowercase()) {
+                    menu_labels.push(lbl);
+                }
+            }
+
             let id = root.format_short_path(&verb_subkey);
-            let is_system = is_likely_system_entry(&verb, resolved_target.as_deref(), None);
+            let is_system =
+                parent_is_system || is_likely_system_entry(&verb, resolved_target.as_deref(), None);
             let group_key = ContextEntry::compute_group_key(
                 EntryKind::ShellVerb,
                 &display_name,
@@ -355,7 +473,7 @@ impl ScanContext {
                 target_exists,
                 clsid,
                 clsid_description,
-                menu_labels: Vec::new(),
+                menu_labels,
                 package_name: None,
                 icon,
                 disabled,
@@ -363,6 +481,102 @@ impl ScanContext {
                 group_key,
             });
         }
+
+        (collected_labels, first_exe)
+    }
+
+    /// SubCommands 에서 참조하는 Explorer\CommandStore\shell\<name> 단일 항목 스캔
+    fn scan_command_store_item(
+        &mut self,
+        cmd_name: &str,
+        category: Category,
+        target_label: &TargetLabel,
+        parent_display: &str,
+        parent_is_system: bool,
+    ) -> (Option<String>, Option<String>) {
+        let store_paths = [
+            (
+                RegRoot::Hkcu,
+                Scope::User,
+                format!("Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\CommandStore\\shell\\{cmd_name}"),
+            ),
+            (
+                RegRoot::Hklm,
+                Scope::System,
+                format!("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\CommandStore\\shell\\{cmd_name}"),
+            ),
+        ];
+
+        for (root, scope, verb_subkey) in store_paths {
+            let Some(verb_key) = RegKey::open_read(root, &verb_subkey) else {
+                continue;
+            };
+            let disabled = verb_key.value_exists("LegacyDisable");
+            let raw_display = verb_key
+                .read_string("MUIVerb")
+                .filter(|s| !s.trim().is_empty())
+                .or_else(|| verb_key.read_default_string().filter(|s| !s.trim().is_empty()))
+                .unwrap_or_else(|| cmd_name.to_string());
+            let own_display = resolve_mui_string(&raw_display);
+            let display_name = format!("{parent_display} > {own_display}");
+            let icon = verb_key.read_string("Icon").filter(|s| !s.trim().is_empty());
+            let cmd_key = verb_key.open_subkey_read("command");
+            let command = cmd_key
+                .as_ref()
+                .and_then(|c| c.read_default_string())
+                .filter(|s| !s.trim().is_empty());
+            let mut extracted = command.as_deref().and_then(extract_executable_from_command);
+            if extracted.is_none() {
+                if let Some(ref ic) = icon {
+                    extracted = extract_path_from_icon(ic);
+                }
+            }
+            let (resolved_target, target_exists) = match extracted {
+                Some(raw) => {
+                    let (p, exists) = resolve_and_check_exists(&raw);
+                    (Some(p), Some(exists))
+                }
+                None => (None, None),
+            };
+            let id = root.format_short_path(&verb_subkey);
+            let is_system = parent_is_system
+                || is_likely_system_entry(cmd_name, resolved_target.as_deref(), None);
+            let group_key = ContextEntry::compute_group_key(
+                EntryKind::ShellVerb,
+                &display_name,
+                resolved_target.as_deref(),
+                None,
+                None,
+                &id,
+            );
+            let ret_exe = resolved_target.clone();
+            self.push_entry(ContextEntry {
+                id,
+                display_name,
+                raw_name: cmd_name.to_string(),
+                kind: EntryKind::ShellVerb,
+                scope,
+                category,
+                target_label: target_label.clone(),
+                registry_root: Some(root),
+                registry_subkey: Some(verb_subkey),
+                file_path: None,
+                disabled_file_path: None,
+                command,
+                resolved_target,
+                target_exists,
+                clsid: None,
+                clsid_description: None,
+                menu_labels: Vec::new(),
+                package_name: None,
+                icon,
+                disabled,
+                is_system,
+                group_key,
+            });
+            return (Some(own_display), ret_exe);
+        }
+        (None, None)
     }
 
     fn scan_shellex_under(
@@ -1230,5 +1444,91 @@ mod tests {
                 c.resolved_target
             );
         }
+
+        let pwsh_hits: Vec<_> = res
+            .entries
+            .iter()
+            .filter(|e| {
+                e.display_name.to_ascii_lowercase().contains("powershell 7")
+                    || e.raw_name.to_ascii_lowercase().contains("powershell7")
+                    || e.raw_name.to_ascii_lowercase().contains("openpwsh")
+            })
+            .collect();
+        println!("--- POWERSHELL 7 MATCHES ({}) ---", pwsh_hits.len());
+        for p in pwsh_hits {
+            println!(
+                "  {} | cat={:?} | sys={} | labels={:?} | loc={}",
+                p.display_name,
+                p.category,
+                p.is_system,
+                p.menu_labels,
+                p.location_display()
+            );
+        }
+    }
+
+    #[test]
+    fn scans_extended_subcommands_key_and_inline_submenus_individually() {
+        let pid = std::process::id();
+        let classes_rel = format!("ContextManager_SubTest_{pid}");
+        let base_under_classes = format!("Software\\Classes\\{classes_rel}");
+        let _ = crate::reg::delete_tree(RegRoot::Hkcu, &base_under_classes);
+
+        // 상위 메뉴: ExtendedSubCommandsKey 로 외부 ContextMenus 참조 (Icon 없이도 탐지되어야 함)
+        let parent_key = format!("{base_under_classes}\\Dir\\shell\\MyCascading");
+        let ext_rel = format!("{classes_rel}\\ContextMenus\\MyCascading");
+        let sub1 = format!("Software\\Classes\\{ext_rel}\\shell\\openhere");
+        let sub2 = format!("Software\\Classes\\{ext_rel}\\shell\\runadmin");
+        {
+            let pk = RegKey::create_write(RegRoot::Hkcu, &parent_key).unwrap();
+            pk.set_string("MUIVerb", "&PowerShell 7 Demo").unwrap();
+            pk.set_string("ExtendedSubCommandsKey", &ext_rel).unwrap();
+
+            let s1 = RegKey::create_write(RegRoot::Hkcu, &sub1).unwrap();
+            s1.set_string("MUIVerb", "Open &here").unwrap();
+            let s1c = RegKey::create_write(RegRoot::Hkcu, &format!("{sub1}\\command")).unwrap();
+            s1c.set_string("", "\"C:\\Windows\\System32\\cmd.exe\" /k").unwrap();
+
+            let s2 = RegKey::create_write(RegRoot::Hkcu, &sub2).unwrap();
+            s2.set_string("MUIVerb", "Open here as &Administrator").unwrap();
+            let s2c = RegKey::create_write(RegRoot::Hkcu, &format!("{sub2}\\command")).unwrap();
+            s2c.set_string("", "\"C:\\NonExistent\\pwsh.exe\" -NoExit").unwrap();
+        }
+
+        let mut ctx = ScanContext::new();
+        ctx.scan_shell_under(
+            RegRoot::Hkcu,
+            Scope::User,
+            "Software\\Classes",
+            &format!("{classes_rel}\\Dir"),
+            Category::Directory,
+            &TargetLabel::Directory,
+        );
+
+        assert_eq!(ctx.entries.len(), 3);
+        let parent = ctx
+            .entries
+            .iter()
+            .find(|e| e.display_name == "PowerShell 7 Demo")
+            .expect("parent entry");
+        assert!(parent.menu_labels.iter().any(|l| l == "Open here"));
+        assert!(parent.menu_labels.iter().any(|l| l == "Open here as Administrator"));
+
+        let child1 = ctx
+            .entries
+            .iter()
+            .find(|e| e.display_name == "PowerShell 7 Demo > Open here")
+            .expect("child1 entry");
+        assert_eq!(child1.registry_subkey.as_deref(), Some(sub1.as_str()));
+
+        let child2 = ctx
+            .entries
+            .iter()
+            .find(|e| e.display_name == "PowerShell 7 Demo > Open here as Administrator")
+            .expect("child2 entry");
+        assert_eq!(child2.registry_subkey.as_deref(), Some(sub2.as_str()));
+        assert_eq!(child2.target_exists, Some(false));
+
+        let _ = crate::reg::delete_tree(RegRoot::Hkcu, &base_under_classes);
     }
 }
